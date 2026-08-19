@@ -9,6 +9,15 @@ from typing import Any
 
 from job_market.schemas import Channel, RawSnapshotRecord
 
+PARTITION_PREFIX_MAX_LENGTH = 80
+
+
+def _safe_partition_name(partition: str) -> str:
+    prefix = re.sub(r"[^a-zA-Z0-9_-]+", "-", partition).strip("-_")
+    prefix = prefix[:PARTITION_PREFIX_MAX_LENGTH].rstrip("-_") or "partition"
+    digest = hashlib.sha256(partition.encode("utf-8")).hexdigest()[:16]
+    return f"{prefix}-{digest}"
+
 
 class RawStore:
     def __init__(self, root: Path, run_id: str, source_key: str):
@@ -25,7 +34,7 @@ class RawStore:
         payload: Any,
     ) -> RawSnapshotRecord:
         captured_at = datetime.now(UTC)
-        safe_partition = re.sub(r"[^a-zA-Z0-9_-]+", "_", partition).strip("_") or "all"
+        safe_partition = _safe_partition_name(partition)
         relative = Path(
             self.source_key,
             captured_at.strftime("%Y-%m-%d"),

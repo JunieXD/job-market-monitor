@@ -471,13 +471,16 @@ class Repository:
         error: str,
         snapshots: list[RawSnapshotRecord] | None = None,
     ) -> None:
+        snapshots_by_path = {
+            snapshot.path: snapshot for snapshot in (snapshots or [])
+        }
         with Session(self.engine) as session, session.begin():
             run = session.get(CrawlRun, run_id)
             if run is not None:
                 run.status = "failed"
                 run.finished_at = self._now()
                 run.error = error[:10000]
-                self._add_snapshots(session, run_id, snapshots or [])
+                self._add_snapshots(session, run_id, list(snapshots_by_path.values()))
 
     @staticmethod
     def _set_latest_daily_snapshot(

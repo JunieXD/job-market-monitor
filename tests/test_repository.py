@@ -499,3 +499,39 @@ def test_failed_run_keeps_snapshot_metadata() -> None:
         stored = session.scalar(select(RawSnapshot))
         assert stored is not None
         assert stored.path == snapshot.path
+
+
+def test_failed_run_deduplicates_snapshot_paths_during_error_recovery() -> None:
+    repository, clock = make_repository()
+    source_id = repository.ensure_source()
+    run_id = repository.start_run(source_id, Channel.EXPERIENCED.value)
+    path = (
+        f"bytedance_cn/2026-08-19/{run_id}/"
+        "experienced/category-duplicate-0000000.json.gz"
+    )
+    snapshots = [
+        RawSnapshotRecord(
+            path=path,
+            sha256=character * 64,
+            byte_size=size,
+            channel=Channel.EXPERIENCED,
+            partition=partition,
+            offset=0,
+            captured_at=clock(),
+        )
+        for character, size, partition in (
+            ("a", 100, "category-研发"),
+            ("b", 200, "category-设计"),
+        )
+    ]
+
+    repository.fail_run(run_id, "test failure", snapshots)
+
+    with Session(repository.engine) as session:
+        run = session.get(CrawlRun, run_id)
+        stored = session.scalars(select(RawSnapshot)).all()
+        assert run is not None
+        assert run.status == "failed"
+        assert len(stored) == 1
+        assert stored[0].partition == "category-设计"
+        assert stored[0].sha256 == "b" * 64
