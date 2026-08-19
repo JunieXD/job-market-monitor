@@ -14,6 +14,7 @@ cp .env.example .env
 docker compose build collector
 docker compose up -d postgres
 docker compose run --rm collector init-db
+docker compose up -d api web
 ```
 
 先用小范围 dry-run 检查页面和解析器：
@@ -101,3 +102,12 @@ journalctl -u job-market-crawl.service -n 200 --no-pager
 
 出现单个来源错误时，先查看该来源的 service 输出和数据库中的失败运行记录；不要为了绕过限制而
 加入个人 Cookie、验证码绕过、代理池或指纹伪装。
+
+## 网站服务
+
+本地 Compose 的网站入口为 `http://127.0.0.1:3000`，API 入口为
+`http://127.0.0.1:8000/docs`。前端容器通过 `API_INTERNAL_URL=http://api:8000` 访问 API，
+浏览器只访问网站同源的 `/api/v1` 路径。
+
+生产 Compose 不映射宿主端口，网站和 API 会加入现有 PostgreSQL network。需要将服务器已有的
+Nginx/Caddy 反向代理到 `web:3000`；不要把 API 端口直接暴露到公网。

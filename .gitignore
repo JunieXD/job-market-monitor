@@ -13,6 +13,13 @@ dist/
 build/
 *.egg-info/
 
+# Frontend build and dependency output.
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/npm-debug.log*
+frontend/tsconfig.tsbuildinfo
+
 # Runtime data must never be committed.
 /runtime/
 /data/

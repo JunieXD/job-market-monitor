@@ -162,9 +162,11 @@ systemctl list-timers job-market-crawl.timer
 本地 Compose 会同时提供 API，默认监听 `127.0.0.1:8000`：
 
 ```bash
-docker compose up -d postgres api
+docker compose up -d postgres api web
 curl http://127.0.0.1:8000/healthz
 ```
+
+网站默认监听 `http://127.0.0.1:3000`，前端通过同源路径访问 API，不需要在浏览器中配置跨域地址。
 
 接口文档由 FastAPI 自动生成：
 

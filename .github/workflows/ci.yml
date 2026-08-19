@@ -36,3 +36,14 @@ jobs:
       - run: ruff check .
       - run: bash -n deploy/run-scheduled-crawls.sh
       - run: pytest -q
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+        working-directory: frontend
+      - run: npm run lint
+        working-directory: frontend
+      - run: npm run build
+        working-directory: frontend
