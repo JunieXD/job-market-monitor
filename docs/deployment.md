@@ -105,8 +105,8 @@ journalctl -u job-market-crawl.service -n 200 --no-pager
 
 ## 网站服务
 
-本地 Compose 的网站入口为 `http://127.0.0.1:3000`，API 入口为
-`http://127.0.0.1:8000/docs`。前端容器通过 `API_INTERNAL_URL=http://api:8000` 访问 API，
+本地 Compose 的网站入口为 `http://<Ubuntu虚拟机IP>:3000`，API 入口为
+`http://<Ubuntu虚拟机IP>:8000/docs`。前端容器通过 `API_INTERNAL_URL=http://api:8000` 访问 API，
 浏览器只访问网站同源的 `/api/v1` 路径。
 
 生产 Compose 不映射宿主端口，网站和 API 会加入现有 PostgreSQL network。需要将服务器已有的
