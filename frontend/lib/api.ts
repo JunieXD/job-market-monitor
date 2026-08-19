@@ -29,6 +29,7 @@ export type CompanyRow = {
   active_posting_count: number;
   new_posting_count: number;
   changed_posting_count: number;
+  first_missing_posting_count: number;
   closed_posting_count: number;
   reopened_posting_count: number;
 };
@@ -66,12 +67,69 @@ export type JobRow = {
   source_updated_at: string | null;
   status: string;
   recruitment_count: number | null;
+  first_seen_at: string;
+  last_seen_at: string;
 };
 
-export async function getJson<T>(path: string, params?: Record<string, string | undefined>): Promise<T> {
+export type CompanyMeta = {
+  key: string;
+  name: string;
+  source_count: number;
+};
+
+export type CollectionChannel = {
+  source_key: string;
+  display_name: string;
+  company_key: string;
+  company_name: string;
+  channel: string;
+  run_id: string | null;
+  attempt_status: string | null;
+  state: "completed" | "running" | "failed" | "partial" | "pending";
+  started_at: string | null;
+  finished_at: string | null;
+  discovered_count: number | null;
+  page_count: number | null;
+  complete: boolean | null;
+  absence_authoritative: boolean | null;
+  is_standard: boolean;
+  last_standard_date: string | null;
+  error_summary: string | null;
+};
+
+export type CollectionStatus = {
+  snapshot_date: string;
+  timezone: string;
+  checked_at: string;
+  schedule: {
+    frequency: "daily";
+    hour: number;
+    minute: number;
+    next_run_at: string;
+  };
+  summary: {
+    total: number;
+    completed: number;
+    running: number;
+    failed: number;
+    partial: number;
+    pending: number;
+    progress_ratio: number;
+    started_at: string | null;
+    last_activity_at: string | null;
+  };
+  channels: CollectionChannel[];
+};
+
+export async function getJson<T>(
+  path: string,
+  params?: Record<string, string | number | null | undefined>,
+): Promise<T> {
   const search = new URLSearchParams();
   Object.entries(params ?? {}).forEach(([key, value]) => {
-    if (value) search.set(key, value);
+    if (value !== undefined && value !== null && value !== "") {
+      search.set(key, String(value));
+    }
   });
   const response = await fetch(`${path}${search.size ? `?${search.toString()}` : ""}`, {
     cache: "no-store",
@@ -84,4 +142,22 @@ export async function getJson<T>(path: string, params?: Record<string, string | 
 
 export function formatNumber(value: number | undefined): string {
   return new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 1 }).format(value ?? 0);
+}
+
+export function formatPercent(value: number | undefined): string {
+  return new Intl.NumberFormat("zh-CN", {
+    style: "percent",
+    maximumFractionDigits: 1,
+  }).format(value ?? 0);
+}
+
+export function formatDateTime(value: string | null | undefined): string {
+  if (!value) return "暂无";
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(new Date(value));
 }

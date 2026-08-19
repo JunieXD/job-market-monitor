@@ -9,8 +9,9 @@
 为回答“哪些城市岗位更集中”“某类岗位何时开始增加”“不同公司的岗位结构如何变化”等问题，
 提供可追溯的数据基础。
 
-> 当前项目处于采集器和数据层建设阶段，尚未提供可直接访问的在线分析网站，也不会把未经验证的
-> 主题标签或 LLM 结论混入默认数据。
+项目已经提供只读分析 API 和多页面网站，并可在 Ubuntu 上按日运行真实采集。当前仍处于连续
+试运行阶段，页面会明确展示来源覆盖率，不会把未完成的来源伪装成完整市场数据，也不会把未经
+验证的主题标签或 LLM 结论混入默认数据。
 
 ## 当前状态
 
@@ -20,9 +21,10 @@
 | 采集方式 | Playwright 无界面 Chromium，读取招聘页面自身发出的公开 JSON 响应 |
 | 数据库 | PostgreSQL 16 |
 | 原始数据 | gzip JSON，保存在 Docker named volume，不进入 Git |
-| 定时运行 | Ubuntu systemd timer，每天按上海时间运行 |
-| 测试 | 160 passed，1 skipped |
-| 当前阶段 | 数据采集、数据契约和部署验证；前端和生产部署待后续进行 |
+| 定时运行 | Ubuntu systemd timer，每天上海时间 03:15 运行，同日已完成来源自动跳过 |
+| 分析网站 | Next.js 多页面网站：总览、趋势、岗位分类、城市、岗位、采集状态 |
+| 测试 | 165 passed，1 skipped；前端 TypeScript 和生产构建通过 |
+| 当前阶段 | Ubuntu 虚拟机连续真实采集试运行；生产服务器暂不部署 |
 
 ## 已接入来源
 
@@ -143,7 +145,8 @@ docker compose run --rm collector check-source-health
 
 采集器默认以 headless Chromium 运行，不需要桌面环境、物理显示器、X11、VNC 或单独配置 Xvfb。
 
-批量调度脚本会为每个来源创建独立容器，单个来源失败不会阻止后续来源，并在批次结束时统一汇总：
+批量调度脚本会为每个来源创建独立容器，单个来源失败不会阻止后续来源，并在批次结束时统一汇总。
+当天已经具备标准快照的来源不会再次采集；人工同日补跑成功时，日快照会指向最后一次权威结果：
 
 ```bash
 sudo install -m 0755 deploy/run-scheduled-crawls.sh /opt/job-market-monitor/deploy/
@@ -174,8 +177,18 @@ curl http://127.0.0.1:8000/healthz
 http://127.0.0.1:8000/docs
 ```
 
-当前 API 提供市场总览、公司趋势、分类分布、城市分布、岗位分页、岗位详情和来源健康检查。所有
-分析响应都带有快照日期、指标口径和来源覆盖状态；API 只读数据库，不执行采集或修改岗位事实。
+当前 API 提供市场总览、公司趋势、分类分布、城市分布、岗位分页、岗位详情、来源健康和当天采集
+进度。所有分析响应都带有快照日期、指标口径和来源覆盖状态；API 只读数据库，不执行采集或修改
+岗位事实。网站包含以下路由：
+
+```text
+/             市场总览
+/trends       公司与市场趋势
+/categories   岗位分类
+/cities       城市分布
+/jobs         岗位查询
+/collection   当天采集进度
+```
 
 ## 目录结构
 
@@ -187,6 +200,7 @@ src/job_market/repository.py 采集结果入库与生命周期处理
 src/job_market/analytics.py  可重建的分析查询
 src/job_market/migrations/   Alembic 数据库迁移
 tests/                       解析、模型、质量和命令测试
+frontend/                    Next.js 多页面分析网站和复用组件
 deploy/                      Docker 调度脚本和 systemd 配置
 docs/                        数据契约、来源目录和指标定义
 ```
@@ -197,6 +211,7 @@ docs/                        数据契约、来源目录和指标定义
 uv run ruff check .
 uv run pytest -q
 bash -n deploy/run-scheduled-crawls.sh
+cd frontend && npm run lint && npm run build
 ```
 
 欢迎贡献新的官方招聘来源、解析测试、数据质量规则和分析查询。连接器只能访问公开且无需登录的
@@ -221,6 +236,7 @@ bash -n deploy/run-scheduled-crawls.sh
 | [指标定义](docs/metrics.md) | 岗位趋势、生命周期和公司/来源统计口径 |
 | [部署说明](docs/deployment.md) | 本地 Ubuntu 验证、已有 PostgreSQL 和 systemd 定时任务 |
 | [网站与 API 实施计划](docs/web-api-plan.md) | 页面、接口、验收标准和分阶段提交目标 |
+| [Ubuntu 连续试运行](docs/ubuntu-trial.md) | 每日真实采集、网站常驻、进度观察和多日验收方法 |
 | [贡献指南](CONTRIBUTING.md) | 新增连接器、fixture、测试和数据安全要求 |
 | [安全策略](SECURITY.md) | 安全漏洞报告和运行数据边界 |
 | [生产 Compose](compose.production.yaml) | 接入已有 PostgreSQL 的生产容器配置 |

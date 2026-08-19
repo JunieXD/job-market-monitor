@@ -3,7 +3,7 @@
 import { useEffect, useRef } from "react";
 import * as echarts from "echarts";
 
-export function Chart({ option, ariaLabel }: { option: echarts.EChartsOption; ariaLabel: string }) {
+export function Chart({ option, ariaLabel, className = "" }: { option: echarts.EChartsOption; ariaLabel: string; className?: string }) {
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -18,5 +18,5 @@ export function Chart({ option, ariaLabel }: { option: echarts.EChartsOption; ar
     };
   }, [option]);
 
-  return <div ref={ref} className="chart" role="img" aria-label={ariaLabel} />;
+  return <div ref={ref} className={`chart ${className}`} role="img" aria-label={ariaLabel} />;
 }
