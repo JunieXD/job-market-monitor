@@ -5,17 +5,16 @@ import json
 from math import ceil
 from typing import Any
 
-from playwright.async_api import Page, Response, Route
+from playwright.async_api import Page, Response
 
 from job_market.config import Settings
 from job_market.connectors.browser_json import (
-    BrowserResponseUnavailableError,
     JsonResponseQueue,
     drain_json_responses,
     enqueue_json_response,
     next_json_payload,
 )
-from job_market.observability import log_event
+from job_market.connectors.retry import retry_async
 from job_market.raw_store import RawStore
 from job_market.schemas import (
     BusinessUnitRecord,
@@ -35,6 +34,9 @@ DETAIL_CONCURRENCY = 2
 DETAIL_OPEN_ATTEMPTS = 3
 POSITION_LIST_URL = "https://join.qq.com/post.html?query=p_1"
 POSITION_DETAIL_URL = "https://join.qq.com/post_detail.html?postid={post_id}"
+POSITION_DETAIL_API_URL = (
+    "https://join.qq.com/api/v1/jobDetails/getJobDetailsByPostId"
+)
 
 
 class TencentConnector:
@@ -51,7 +53,6 @@ class TencentConnector:
         self._last_request_started_at = 0.0
         self._request_start_lock = asyncio.Lock()
         self._search_responses: JsonResponseQueue = asyncio.Queue()
-        self._detail_responses: JsonResponseQueue = asyncio.Queue()
         self.page.on("response", self._record_response)
         self.issues: list[CollectionIssue] = []
 
@@ -64,7 +65,6 @@ class TencentConnector:
         if channel is not Channel.CAMPUS:
             raise ValueError("Tencent connector supports only the campus channel")
 
-        await self.page.route("**/*", _skip_nonessential_assets)
         payload = await self._open_all_positions()
         first = self._search_page(payload, expected_page=1)
         total_count = first["count"]
@@ -141,10 +141,13 @@ class TencentConnector:
 
         detail_results = await self._collect_details(list_rows)
         jobs: list[JobRecord] = []
-        for index, (record, detail_payload) in enumerate(detail_results):
-            post_id = record.external_id
+        retired_count = 0
+        for index, (post_id, record, detail_payload) in enumerate(detail_results):
             self._save_detail_payload(channel, post_id, index, detail_payload)
-            jobs.append(record)
+            if record is None:
+                retired_count += 1
+            else:
+                jobs.append(record)
         if len(detail_results) != len(list_rows):
             complete = False
 
@@ -152,7 +155,11 @@ class TencentConnector:
             channel=channel,
             jobs=jobs,
             snapshots=self.snapshots,
-            partition_counts={"all": total_count},
+            partition_counts={
+                "all": total_count,
+                "active-detail": len(jobs),
+                "explicitly-removed-detail": retired_count,
+            },
             pages_fetched=self.pages_fetched,
             complete=complete,
             issues=self.issues,
@@ -203,38 +210,22 @@ class TencentConnector:
     async def _collect_details(
         self,
         list_rows: list[dict[str, Any]],
-    ) -> list[tuple[JobRecord, dict[str, Any]]]:
+    ) -> list[tuple[str, JobRecord | None, dict[str, Any]]]:
         if not list_rows:
             return []
-
-        workers: list[tuple[Page, JsonResponseQueue]] = [
-            (self.page, self._detail_responses)
-        ]
-        extra_pages: list[Page] = []
-        for _ in range(min(DETAIL_CONCURRENCY, len(list_rows)) - 1):
-            detail_page = await self.page.context.new_page()
-            await detail_page.route("**/*", _skip_nonessential_assets)
-            detail_queue: JsonResponseQueue = asyncio.Queue()
-            detail_page.on(
-                "response",
-                lambda response, queue=detail_queue: self._record_detail_response(
-                    response, queue
-                ),
-            )
-            workers.append((detail_page, detail_queue))
-            extra_pages.append(detail_page)
 
         pending: asyncio.Queue[tuple[int, dict[str, Any]] | None] = asyncio.Queue()
         for item in enumerate(list_rows):
             pending.put_nowait(item)
-        for _ in workers:
+        worker_count = min(DETAIL_CONCURRENCY, len(list_rows))
+        for _ in range(worker_count):
             pending.put_nowait(None)
 
-        results: list[tuple[JobRecord, dict[str, Any]] | None] = [None] * len(
-            list_rows
-        )
+        results: list[tuple[str, JobRecord | None, dict[str, Any]] | None] = [
+            None
+        ] * len(list_rows)
 
-        async def worker(page: Page, queue: JsonResponseQueue) -> None:
+        async def worker() -> None:
             while True:
                 item = await pending.get()
                 if item is None:
@@ -242,19 +233,23 @@ class TencentConnector:
                 index, list_row = item
                 post_id = _optional(list_row.get("postId")) or f"list-index-{index}"
                 try:
-                    payload = await self._open_detail(page, queue, post_id)
-                    record = self.parse_job(payload["data"])
-                    if record.external_id != post_id:
-                        raise RuntimeError(
-                            "Tencent detail mismatch: "
-                            f"requested={post_id}, got={record.external_id}"
-                        )
+                    payload = await retry_async(
+                        lambda post_id=post_id: self._fetch_detail(post_id),
+                        source=self.source_key,
+                        operation_name=f"detail:{post_id}",
+                        attempts=DETAIL_OPEN_ATTEMPTS,
+                    )
+                    record = self._parse_detail_response(payload, post_id)
                     list_title = _optional(list_row.get("positionTitle"))
-                    if list_title is not None and list_title != record.title:
+                    if (
+                        record is not None
+                        and list_title is not None
+                        and list_title != record.title
+                    ):
                         raise RuntimeError(
                             f"Tencent title changed between list and detail for {post_id}"
                         )
-                    results[index] = (record, payload)
+                    results[index] = (post_id, record, payload)
                 except Exception as exc:
                     self.issues.append(
                         CollectionIssue(
@@ -263,77 +258,56 @@ class TencentConnector:
                             external_id=post_id,
                             error_type=type(exc).__name__,
                             message=str(exc) or "Tencent detail collection failed",
-                            retry_count=(
-                                DETAIL_OPEN_ATTEMPTS - 1
-                                if isinstance(exc, BrowserResponseUnavailableError)
-                                else 0
-                            ),
+                            retry_count=DETAIL_OPEN_ATTEMPTS - 1,
                         )
                     )
 
-        try:
-            await asyncio.gather(*(worker(page, queue) for page, queue in workers))
-        finally:
-            await asyncio.gather(
-                *(page.close() for page in extra_pages),
-                return_exceptions=True,
-            )
+        await asyncio.gather(*(worker() for _ in range(worker_count)))
 
         return [result for result in results if result is not None]
 
-    async def _open_detail(
-        self,
-        page: Page,
-        queue: JsonResponseQueue,
-        post_id: str,
-    ) -> dict[str, Any]:
-        for attempt in range(1, DETAIL_OPEN_ATTEMPTS + 1):
-            try:
-                return await self._open_detail_once(page, queue, post_id)
-            except BrowserResponseUnavailableError as exc:
-                if attempt == DETAIL_OPEN_ATTEMPTS:
-                    raise BrowserResponseUnavailableError(
-                        f"Tencent detail {post_id} did not load after "
-                        f"{DETAIL_OPEN_ATTEMPTS} attempts"
-                    ) from exc
-                log_event(
-                    "request_retry",
-                    level="warning",
-                    source=self.source_key,
-                    operation=f"detail:{post_id}",
-                    attempt=attempt,
-                    max_attempts=DETAIL_OPEN_ATTEMPTS,
-                    error_type=type(exc).__name__,
-                    error=str(exc),
-                )
-        raise AssertionError("unreachable")
-
-    async def _open_detail_once(
-        self,
-        page: Page,
-        queue: JsonResponseQueue,
-        post_id: str,
-    ) -> dict[str, Any]:
+    async def _fetch_detail(self, post_id: str) -> dict[str, Any]:
         await self._rate_limit()
-        drain_json_responses(queue)
-        await page.goto(
-            POSITION_DETAIL_URL.format(post_id=post_id),
-            # The source fact arrives through the page's JSON request. Waiting
-            # for the full detail DOM adds several seconds of unrelated asset
-            # work per position and does not improve response integrity.
-            wait_until="commit",
-            timeout=60_000,
+        result = await self.page.evaluate(
+            """async ({url, postId}) => {
+                const response = await fetch(
+                    `${url}?postId=${encodeURIComponent(postId)}`,
+                    {credentials: "same-origin"},
+                );
+                return {httpStatus: response.status, payload: await response.json()};
+            }""",
+            {"url": POSITION_DETAIL_API_URL, "postId": post_id},
         )
-        payload = await self._next_payload(
-            queue,
-            f"detail:{post_id}",
-        )
-        actual = _optional(payload["data"].get("postId"))
-        if actual != post_id:
-            raise RuntimeError(
-                f"Tencent detail response mismatch: requested={post_id}, got={actual!r}"
-            )
+        if not isinstance(result, dict) or result.get("httpStatus") != 200:
+            status = result.get("httpStatus") if isinstance(result, dict) else None
+            raise RuntimeError(f"Tencent detail {post_id} returned HTTP {status}")
+        payload = result.get("payload")
+        if not isinstance(payload, dict):
+            raise RuntimeError(f"Tencent detail {post_id} returned invalid JSON")
         return payload
+
+    @classmethod
+    def _parse_detail_response(
+        cls,
+        payload: dict[str, Any],
+        post_id: str,
+    ) -> JobRecord | None:
+        if (
+            payload.get("status") == 404
+            and payload.get("message") == "岗位已下架"
+            and payload.get("data") is None
+        ):
+            return None
+        if payload.get("status") != 0 or not isinstance(payload.get("data"), dict):
+            message = json.dumps(payload, ensure_ascii=False)[:1000]
+            raise RuntimeError(f"Invalid Tencent detail {post_id}: {message}")
+        record = cls.parse_job(payload["data"])
+        if record.external_id != post_id:
+            raise RuntimeError(
+                f"Tencent detail response mismatch: requested={post_id}, "
+                f"got={record.external_id}"
+            )
+        return record
 
     async def _next_payload(
         self,
@@ -377,19 +351,6 @@ class TencentConnector:
             return
         if "/api/v1/position/searchPosition" in response.url:
             enqueue_json_response(self._search_responses, response)
-        elif "/api/v1/jobDetails/getJobDetailsByPostId" in response.url:
-            enqueue_json_response(self._detail_responses, response)
-
-    @staticmethod
-    def _record_detail_response(
-        response: Response,
-        queue: JsonResponseQueue,
-    ) -> None:
-        if (
-            response.status == 200
-            and "/api/v1/jobDetails/getJobDetailsByPostId" in response.url
-        ):
-            enqueue_json_response(queue, response)
 
     async def _rate_limit(self) -> None:
         async with self._request_start_lock:
@@ -403,7 +364,6 @@ class TencentConnector:
 
     def _drain_queues(self) -> None:
         drain_json_responses(self._search_responses)
-        drain_json_responses(self._detail_responses)
 
     def _save_list_payload(
         self,
@@ -488,13 +448,6 @@ class TencentConnector:
             business_units=_business_units(raw.get("intentionBGDList"), external_id),
             source_payload=raw,
         )
-
-
-async def _skip_nonessential_assets(route: Route) -> None:
-    if route.request.resource_type in {"image", "media", "font"}:
-        await route.abort()
-    else:
-        await route.continue_()
 
 
 def _optional(value: Any) -> str | None:
