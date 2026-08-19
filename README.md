@@ -23,7 +23,7 @@
 | 原始数据 | gzip JSON，保存在 Docker named volume，不进入 Git |
 | 定时运行 | Ubuntu systemd timer，每天上海时间 03:15 运行，同日已完成来源自动跳过 |
 | 分析网站 | Next.js 多页面网站：总览、趋势、岗位分类、城市、岗位、采集状态 |
-| 测试 | 180 passed，1 skipped；前端 TypeScript 和生产构建通过 |
+| 测试 | 181 passed，1 skipped；前端 TypeScript 和生产构建通过 |
 | 当前阶段 | Ubuntu 虚拟机连续真实采集试运行；生产服务器暂不部署 |
 
 ## 已接入来源

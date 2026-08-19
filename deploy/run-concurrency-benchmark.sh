@@ -48,9 +48,15 @@ active_pids=()
 active_sources=()
 active_count=0
 benchmark_names=()
+stats_pid=""
+monitor_marker="${run_dir}/.monitor-running"
 
 cleanup() {
   local name
+  rm -f "$monitor_marker"
+  if [[ -n "$stats_pid" ]]; then
+    kill "$stats_pid" >/dev/null 2>&1 || true
+  fi
   for name in "${active_names[@]}"; do
     "$DOCKER_BIN" rm -f "$name" >/dev/null 2>&1 || true
   done
@@ -84,7 +90,7 @@ monitor_stats() {
   local any_running
   local name
   printf 'time\tname\tcpu\tmemory\tnet_io\n' >"$stats_file"
-  while :; do
+  while [[ -e "$monitor_marker" ]]; do
     any_running=false
     "$DOCKER_BIN" stats --no-stream \
       --format '{{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.NetIO}}' \
@@ -100,8 +106,7 @@ monitor_stats() {
         break
       fi
     done
-    [[ "$any_running" == true ]] || break
-    sleep 1
+    sleep 0.5
   done
 }
 
@@ -146,6 +151,7 @@ for spec in $BENCHMARK_SOURCES; do
   active_names+=("job-market-benchmark-${BENCHMARK_RUN_ID}-${safe_name}")
 done
 
+touch "$monitor_marker"
 monitor_stats &
 stats_pid=$!
 for spec in $BENCHMARK_SOURCES; do
@@ -162,9 +168,13 @@ done
 while (( active_count > 0 )); do
   reap_one
 done
+rm -f "$monitor_marker"
 wait "$stats_pid" >/dev/null 2>&1 || true
+stats_pid=""
 
 printf 'duration_seconds=%s\n' "$((SECONDS - started_at))" >"${run_dir}/summary.txt"
 printf 'parallel=%s\nmax_pages=%s\n' "$BENCHMARK_PARALLEL" "$BENCHMARK_MAX_PAGES" \
   >>"${run_dir}/summary.txt"
 log "benchmark finished output=${run_dir}"
+trap - INT TERM HUP EXIT
+cleanup
