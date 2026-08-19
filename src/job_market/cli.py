@@ -190,6 +190,9 @@ SOURCE_SPECS = {
         "scope_name": "快手公开社会招聘与日常实习岗位",
         "base_url": "https://zhaopin.kuaishou.cn",
         "connector": KuaishouConnector,
+        # The current portal does not initialize its position API when image
+        # requests are blocked, so this source needs the complete first page.
+        "block_nonessential_resources": False,
         "channels": {
             Channel.EXPERIENCED: "快手社会招聘公开岗位（国内/国外分区）",
             Channel.INTERNSHIP: "快手日常实习公开岗位（国内/国外分区）",
@@ -729,7 +732,10 @@ async def crawl(args: argparse.Namespace, settings: Settings) -> int:
                     ),
                 )
                 network_metrics = BrowserNetworkMetrics()
-                if settings.crawl_block_nonessential_resources:
+                if settings.crawl_block_nonessential_resources and spec.get(
+                    "block_nonessential_resources",
+                    True,
+                ):
                     await network_metrics.install_policy(context)
                 page = await context.new_page()
                 await network_metrics.attach_page(page)
@@ -791,8 +797,8 @@ async def crawl(args: argparse.Namespace, settings: Settings) -> int:
                         page_count=result.pages_fetched,
                     )
                     summary["database"] = repository.ingest(run_id, result)
-                    if result.outcome == "partial":
-                        partial_channels.append(channel.value)
+                if result.outcome == "partial":
+                    partial_channels.append(channel.value)
                 log_event("channel_finished", **summary)
             finally:
                 if progress_task is not None:

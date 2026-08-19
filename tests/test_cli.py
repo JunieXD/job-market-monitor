@@ -231,6 +231,8 @@ async def run_crawl_case(
     context_close_error: Exception | None = None,
     due_only: bool = False,
     due_channels: set[str] | None = None,
+    dry_run: bool = False,
+    block_nonessential_resources: bool = True,
 ):
     repository = FakeRepository(due_channels)
     state: list[str] = []
@@ -280,6 +282,7 @@ async def run_crawl_case(
             "scope_name": "测试公司",
             "base_url": "https://example.test",
             "connector": connector_type,
+            "block_nonessential_resources": block_nonessential_resources,
             "channels": {Channel.EXPERIENCED: "公开社会招聘岗位"},
         },
     )
@@ -290,7 +293,7 @@ async def run_crawl_case(
 
     class NetworkMetrics:
         async def install_policy(self, context) -> None:
-            return None
+            state.append("network.install_policy")
 
         async def attach_page(self, page) -> None:
             return None
@@ -307,7 +310,7 @@ async def run_crawl_case(
         source="test-source",
         channel=Channel.EXPERIENCED.value,
         full=False,
-        dry_run=False,
+        dry_run=dry_run,
         max_pages=None,
         timeout_seconds=60,
         due_only=due_only,
@@ -366,6 +369,36 @@ async def test_partial_channel_is_persisted_and_returns_degraded_status(
     assert repository.ingested == ["run-experienced"]
     assert repository.failed == []
     assert state[-3:] == ["context.close", "browser.close", "playwright.stop"]
+
+
+async def test_partial_dry_run_returns_degraded_status(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    exit_code, repository, _ = await run_crawl_case(
+        monkeypatch,
+        tmp_path,
+        PartialConnector,
+        dry_run=True,
+    )
+
+    assert exit_code == 2
+    assert repository.ingested == []
+
+
+async def test_source_can_keep_resources_required_by_its_frontend(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    exit_code, _, state = await run_crawl_case(
+        monkeypatch,
+        tmp_path,
+        SuccessfulConnector,
+        block_nonessential_resources=False,
+    )
+
+    assert exit_code == 0
+    assert "network.install_policy" not in state
 
 
 async def test_cleanup_error_does_not_override_successful_run(
