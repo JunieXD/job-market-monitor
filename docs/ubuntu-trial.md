@@ -26,6 +26,18 @@ docker compose ps
 期望 `postgres` 为 healthy，`api` 和 `web` 为 running。API 与网站配置了
 `restart: unless-stopped`，虚拟机或 Docker 服务重启后会自动恢复。
 
+虚拟机外网不稳定时，可保留一份已验证且包含 Chromium 的基础镜像，只更新应用代码层：
+
+```bash
+docker tag job-market-monitor-collector:latest job-market-monitor-collector:vm-base
+docker build -f deploy/Dockerfile.offline \
+  --build-arg BASE_IMAGE=job-market-monitor-collector:vm-base \
+  -t job-market-monitor-collector:latest .
+docker tag job-market-monitor-collector:latest job-market-monitor-api:latest
+```
+
+基础镜像只在依赖或 Chromium 版本变化时通过标准 `Dockerfile` 重建；不能用离线构建跳过依赖变更。
+
 ## 每日调度
 
 虚拟机试运行使用包含本地 PostgreSQL 的 `compose.yaml`。安装 unit 后同时安装虚拟机 override，避免误用只连接外部数据库的生产 Compose：

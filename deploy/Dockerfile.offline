@@ -1,0 +1,16 @@
+ARG BASE_IMAGE=job-market-monitor-collector:vm-base
+FROM ${BASE_IMAGE}
+
+USER root
+WORKDIR /app
+
+COPY pyproject.toml README.md LICENSE ./
+COPY src ./src
+
+# The base image already contains locked runtime dependencies and Chromium.
+RUN pip install --no-cache-dir --no-deps .
+
+USER collector
+
+ENTRYPOINT ["job-market"]
+CMD ["--help"]
