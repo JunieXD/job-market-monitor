@@ -149,7 +149,6 @@ docker compose run --rm collector check-source-health
 当天已经具备标准快照的来源不会再次采集；人工同日补跑成功时，日快照会指向最后一次权威结果：
 
 ```bash
-sudo install -m 0755 deploy/run-scheduled-crawls.sh /opt/job-market-monitor/deploy/
 sudo install -m 0644 deploy/systemd/job-market-crawl.service /etc/systemd/system/
 sudo install -m 0644 deploy/systemd/job-market-crawl.timer /etc/systemd/system/
 sudo systemctl daemon-reload

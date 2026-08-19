@@ -76,8 +76,6 @@ docker compose run --rm collector crawl \
 当天已经完成全部渠道的来源自动跳过，因此 timer 重启或重复触发不会重复采集完整来源。
 
 ```bash
-sudo install -m 0755 deploy/run-scheduled-crawls.sh \
-  /opt/job-market-monitor/deploy/run-scheduled-crawls.sh
 sudo install -m 0644 deploy/systemd/job-market-crawl.service \
   /etc/systemd/system/job-market-crawl.service
 sudo install -m 0644 deploy/systemd/job-market-crawl.timer \
