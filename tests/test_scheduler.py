@@ -82,6 +82,12 @@ case "$command_name" in
       exit 1
     fi
     ;;
+  check-data)
+    if [[ -n "$POSTFLIGHT_ERROR" ]]; then
+      printf '%s\n' "$POSTFLIGHT_ERROR" >&2
+      exit 1
+    fi
+    ;;
 esac
 """,
     )
@@ -123,6 +129,7 @@ def _run_scheduler(
     max_parallel: int = 1,
     fake_sources: str = "alpha\nbeta\n",
     trace_concurrency: bool = False,
+    postflight_error: str = "",
 ):
     docker, timeout, flock = _fake_tools(tmp_path)
     compose_file = tmp_path / "compose.production.yaml"
@@ -143,6 +150,7 @@ def _run_scheduler(
         "FAKE_SOURCES": fake_sources,
         "TRACE_CONCURRENCY": str(trace_concurrency).lower(),
         "RECOVERY_FAIL": os.getenv("RECOVERY_FAIL", "false"),
+        "POSTFLIGHT_ERROR": postflight_error,
         "CRAWL_SLEEP_SECONDS": "0.2",
         "MAX_ATTEMPTS": str(attempts),
         "MAX_PARALLEL_SOURCES": str(max_parallel),
@@ -288,3 +296,25 @@ def test_scheduler_writes_bounded_file_log(tmp_path, monkeypatch) -> None:
     assert events[0]["event"] == "batch_started"
     assert events[0]["batch_id"] == events[-1]["batch_id"]
     assert events[-1]["event"] == "batch_finished"
+
+
+def test_scheduler_log_is_valid_json_for_paths_and_control_characters(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    log_file = tmp_path / "logs" / "crawl.jsonl"
+    error = 'path=/tmp/a\\b\t"quoted"\r'
+    monkeypatch.setenv("CRAWL_LOG_FILE", str(log_file))
+
+    result, _ = _run_scheduler(
+        tmp_path,
+        fail_mode="never",
+        attempts=1,
+        fake_sources="alpha\n",
+        postflight_error=error,
+    )
+
+    assert result.returncode == 1
+    events = [json.loads(line) for line in log_file.read_text().splitlines()]
+    failed = next(event for event in events if event["event"] == "postflight_check_failed")
+    assert failed["detail"] == f"check-data:{error}"

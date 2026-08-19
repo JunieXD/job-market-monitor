@@ -26,9 +26,13 @@ BATCH_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 log_event() {
   local event=$1
   local detail=${2:-}
-  detail=${detail//\/\\}
+  detail=${detail//\\/\\\\}
   detail=${detail//\"/\\\"}
+  detail=${detail//$'\b'/\\b}
+  detail=${detail//$'\f'/\\f}
   detail=${detail//$'\n'/\\n}
+  detail=${detail//$'\r'/\\r}
+  detail=${detail//$'\t'/\\t}
   printf '{"time":"%s","batch_id":"%s","event":"%s","detail":"%s"}\n' \
     "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$BATCH_ID" "$event" "$detail"
 }
@@ -81,7 +85,9 @@ fi
 compose=("$DOCKER_BIN" compose -f "$COMPOSE_FILE")
 
 run_container() {
-  "${compose[@]}" run --rm --no-deps collector "$@"
+  "${compose[@]}" run --rm --no-deps \
+    -e "CRAWL_BATCH_ID=$BATCH_ID" \
+    collector "$@"
 }
 
 cleanup_source_container() {
@@ -99,7 +105,9 @@ run_source() {
     --signal=TERM \
     --kill-after=30s \
     "${SOURCE_TIMEOUT_SECONDS}s" \
-    "${compose[@]}" run --rm --no-deps --name "$container_name" collector \
+    "${compose[@]}" run --rm --no-deps --name "$container_name" \
+    -e "CRAWL_BATCH_ID=$BATCH_ID" \
+    collector \
     crawl --source "$source" --channel all --due-only
 }
 

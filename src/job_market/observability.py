@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from datetime import UTC, datetime
 from typing import Any, TextIO
@@ -17,12 +18,15 @@ def log_event(
 ) -> None:
     """Emit one bounded JSON log event without source payload contents."""
 
-    payload = {
+    payload: dict[str, Any] = {
         "time": datetime.now(UTC).isoformat(),
         "level": level,
         "event": event,
-        **{key: _bounded(value) for key, value in fields.items()},
     }
+    batch_id = os.getenv("CRAWL_BATCH_ID")
+    if batch_id:
+        payload["batch_id"] = _bounded(batch_id)
+    payload.update({key: _bounded(value) for key, value in fields.items()})
     output = stream or (sys.stderr if level in {"warning", "error"} else sys.stdout)
     print(
         json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str),
