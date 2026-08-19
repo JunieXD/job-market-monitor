@@ -171,6 +171,25 @@ class Repository:
             )
         return run_id
 
+    def update_run_progress(
+        self,
+        run_id: str,
+        *,
+        discovered_count: int,
+        page_count: int,
+    ) -> bool:
+        if discovered_count < 0 or page_count < 0:
+            raise ValueError("Crawl progress counts cannot be negative")
+        with Session(self.engine) as session, session.begin():
+            run = session.get(CrawlRun, run_id)
+            if run is None:
+                raise ValueError(f"Unknown crawl run: {run_id}")
+            if run.status != "running":
+                return False
+            run.discovered_count = max(run.discovered_count, discovered_count)
+            run.page_count = max(run.page_count, page_count)
+            return True
+
     def fail_abandoned_runs(
         self,
         *,

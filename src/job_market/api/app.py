@@ -246,14 +246,16 @@ def create_app(
     def city_distribution(
         request: Request,
         company_key: str | None = None,
+        company_keys: Annotated[list[str] | None, Query()] = None,
         snapshot_date: date | None = None,
         channel: str | None = None,
     ) -> AnalyticsEnvelope:
         analytics = AnalyticsRepository(request.app.state.engine)
         coverage = analytics.coverage(snapshot_date)
         selected_date = coverage["snapshot_date"]
+        selected_companies = _unique_values([company_key, *(company_keys or [])])
         rows = analytics.city_distribution(
-            company_key=company_key,
+            company_keys=selected_companies,
             snapshot_date=selected_date,
             channel=channel,
         )
@@ -262,12 +264,13 @@ def create_app(
             coverage=coverage,
             filters={
                 "company_key": company_key,
+                "company_keys": selected_companies,
                 "snapshot_date": selected_date,
                 "channel": channel,
             },
             metric_definition=(
                 "company_city_distribution"
-                if company_key is not None
+                if selected_companies
                 else "market_city_distribution"
             ),
         )
@@ -327,6 +330,10 @@ def create_app(
         status: str = "active",
         query: str | None = Query(default=None, max_length=100),
         query_field: Literal["all", "title", "description", "requirements"] = "all",
+        query_fields: Annotated[
+            list[Literal["title", "description", "requirements"]] | None,
+            Query(),
+        ] = None,
         limit: int = Query(default=50, ge=1, le=100),
         offset: int = Query(default=0, ge=0, le=100000),
     ) -> AnalyticsEnvelope:
@@ -352,12 +359,18 @@ def create_app(
             placeholders = _bind_list(params, "channel", selected_channels)
             filters.append(f"j.channel IN ({placeholders})")
         if query is not None and query.strip():
-            search_columns = {
+            columns_by_field = {
                 "title": ["j.title"],
                 "description": ["j.description"],
                 "requirements": ["j.requirements"],
                 "all": ["j.title", "j.description", "j.requirements"],
-            }[query_field]
+            }
+            selected_query_fields = list(dict.fromkeys(query_fields or [query_field]))
+            search_columns = [
+                column
+                for field in selected_query_fields
+                for column in columns_by_field[field]
+            ]
             filters.append(
                 "("
                 + " OR ".join(
@@ -411,6 +424,7 @@ def create_app(
                 "status": status,
                 "query": query,
                 "query_field": query_field,
+                "query_fields": query_fields,
             },
             metric_definition="current_job_list",
             pagination={"limit": limit, "offset": offset, "total": int(total or 0)},

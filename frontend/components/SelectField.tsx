@@ -1,6 +1,6 @@
 "use client";
 
-import * as Select from "@radix-ui/react-select";
+import { useEffect, useRef, useState } from "react";
 import { Check, ChevronDown } from "lucide-react";
 
 export type SelectOption = { value: string; label: string };
@@ -22,27 +22,61 @@ export function SelectField({
   className?: string;
   triggerClassName?: string;
 }) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const selected = options.find((option) => option.value === value);
+
+  useEffect(() => {
+    function closeOnOutsideClick(event: MouseEvent) {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    }
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("mousedown", closeOnOutsideClick);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("mousedown", closeOnOutsideClick);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, []);
+
   return (
-    <div className={`field ${className}`}>
+    <div className={`field select-field ${className}`} ref={rootRef}>
       {label && <span className="field-label">{label}</span>}
-      <Select.Root value={value} onValueChange={onValueChange}>
-        <Select.Trigger className={`select-trigger ${triggerClassName}`} aria-label={ariaLabel}>
-          <Select.Value />
-          <Select.Icon className="select-icon"><ChevronDown size={15} /></Select.Icon>
-        </Select.Trigger>
-        <Select.Portal>
-          <Select.Content className="select-content" position="popper" sideOffset={6}>
-            <Select.Viewport className="select-viewport">
-              {options.map((option) => (
-                <Select.Item key={option.value} value={option.value} className="select-item">
-                  <Select.ItemText>{option.label}</Select.ItemText>
-                  <Select.ItemIndicator className="select-check"><Check size={14} /></Select.ItemIndicator>
-                </Select.Item>
-              ))}
-            </Select.Viewport>
-          </Select.Content>
-        </Select.Portal>
-      </Select.Root>
+      <button
+        type="button"
+        className={`select-trigger ${triggerClassName}`}
+        aria-label={ariaLabel}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <span>{selected?.label ?? value}</span>
+        <ChevronDown size={15} className="select-icon" aria-hidden="true" />
+      </button>
+      {open && (
+        <div className="select-content" role="listbox" aria-label={ariaLabel}>
+          <div className="select-viewport">
+            {options.map((option) => (
+              <button
+                type="button"
+                role="option"
+                aria-selected={option.value === value}
+                key={option.value}
+                className="select-item"
+                onClick={() => {
+                  onValueChange(option.value);
+                  setOpen(false);
+                }}
+              >
+                <span>{option.label}</span>
+                {option.value === value && <Check size={14} className="select-check" />}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

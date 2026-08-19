@@ -2,22 +2,23 @@
 
 import { Search } from "lucide-react";
 
-import { SelectField, type SelectOption } from "@/components/SelectField";
+import { MultiSelectFilter } from "@/components/MultiSelectFilter";
+import type { SelectOption } from "@/components/SelectField";
 
 export function SearchField({
   value,
   onValueChange,
-  scope,
+  scopesValue,
   scopes,
-  onScopeChange,
+  onScopesChange,
   placeholder,
   ariaLabel,
 }: {
   value: string;
   onValueChange: (value: string) => void;
-  scope: string;
+  scopesValue: string[] | null;
   scopes: SelectOption[];
-  onScopeChange: (value: string) => void;
+  onScopesChange: (value: string[] | null) => void;
   placeholder: string;
   ariaLabel: string;
 }) {
@@ -30,13 +31,15 @@ export function SearchField({
         placeholder={placeholder}
         aria-label={ariaLabel}
       />
-      <SelectField
-        value={scope}
+      <MultiSelectFilter
+        label="搜索字段"
         options={scopes}
-        onValueChange={onScopeChange}
+        values={scopesValue}
+        onValuesChange={onScopesChange}
         ariaLabel="选择搜索字段"
+        allSelectedLabel={`${scopes.length} 个字段`}
+        minimumSelected={1}
         className="search-scope-field"
-        triggerClassName="search-scope-trigger"
       />
     </div>
   );

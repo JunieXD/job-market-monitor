@@ -13,6 +13,9 @@ export function MultiSelectFilter({
   onValuesChange,
   ariaLabel,
   searchPlaceholder,
+  allSelectedLabel,
+  minimumSelected = 0,
+  className = "",
 }: {
   label: string;
   options: SelectOption[];
@@ -20,6 +23,9 @@ export function MultiSelectFilter({
   onValuesChange: (values: string[] | null) => void;
   ariaLabel: string;
   searchPlaceholder?: string;
+  allSelectedLabel?: string;
+  minimumSelected?: number;
+  className?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -51,17 +57,18 @@ export function MultiSelectFilter({
   }, []);
 
   const buttonLabel = useMemo(() => {
-    if (values === null) return `全部${label}`;
+    if (values === null) return allSelectedLabel ?? `全部${label}`;
     if (!values.length) return `${label} 0 项`;
     if (values.length === 1) {
       return options.find((option) => option.value === values[0])?.label ?? `${label} 1 项`;
     }
     return `${label} ${values.length} 项`;
-  }, [label, options, values]);
+  }, [allSelectedLabel, label, options, values]);
 
   function commit(next: Set<string>, manual = true) {
     if (manual) autoRetainResultsRef.current = false;
     const selected = allValues.filter((value) => next.has(value));
+    if (selected.length < minimumSelected) return;
     onValuesChange(selected.length === allValues.length ? null : selected);
   }
 
@@ -104,7 +111,7 @@ export function MultiSelectFilter({
   }
 
   return (
-    <div className="multi-select" ref={rootRef}>
+    <div className={`multi-select ${className}`} ref={rootRef}>
       <button
         type="button"
         className={`multi-select-trigger ${values !== null ? "filtered" : ""}`}
@@ -120,7 +127,6 @@ export function MultiSelectFilter({
           <div className="filter-search">
             <Search size={15} aria-hidden="true" />
             <input
-              autoFocus
               value={query}
               onChange={(event) => updateQuery(event.target.value)}
               onKeyDown={(event) => {
@@ -141,8 +147,8 @@ export function MultiSelectFilter({
           <div className="filter-actions">
             <button type="button" onClick={retainResults} disabled={!filtered.length}>仅保留结果</button>
             <button type="button" onClick={selectResults} disabled={!filtered.length}>全选结果</button>
-            <button type="button" onClick={deselectResults} disabled={!filtered.length}>取消结果</button>
-            <button type="button" onClick={() => { autoRetainResultsRef.current = false; setQuery(""); onValuesChange(null); }}>清除筛选</button>
+            <button type="button" onClick={deselectResults} disabled={!filtered.length || effectiveValues.size - filtered.filter((option) => effectiveValues.has(option.value)).length < minimumSelected}>取消结果</button>
+            <button type="button" onClick={() => { autoRetainResultsRef.current = false; setQuery(""); onValuesChange(null); }}>重置</button>
           </div>
           <div className="filter-options" role="listbox" aria-multiselectable="true" aria-label={`${label}选项`}>
             {filtered.length ? filtered.map((option) => {

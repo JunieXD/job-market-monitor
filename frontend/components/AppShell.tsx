@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
@@ -12,6 +13,8 @@ import {
   MapPinned,
 } from "lucide-react";
 
+import { prefetchJson } from "@/lib/api";
+
 const navigation = [
   { href: "/", label: "总览", icon: LayoutDashboard },
   { href: "/trends", label: "趋势", icon: ChartNoAxesCombined },
@@ -23,6 +26,15 @@ const navigation = [
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  useEffect(() => {
+    const preload = () => navigation.forEach(({ href }) => prefetchRouteData(href));
+    if (typeof window.requestIdleCallback === "function") {
+      const handle = window.requestIdleCallback(preload, { timeout: 2_000 });
+      return () => window.cancelIdleCallback(handle);
+    }
+    const handle = window.setTimeout(preload, 800);
+    return () => window.clearTimeout(handle);
+  }, []);
   return (
     <div className="app-shell">
       <header className="site-header">
@@ -35,7 +47,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             {navigation.map(({ href, label, icon: Icon }) => {
               const active = href === "/" ? pathname === "/" : pathname.startsWith(href);
               return (
-                <Link key={href} href={href} className={`nav-link ${active ? "active" : ""}`}>
+                <Link
+                  key={href}
+                  href={href}
+                  prefetch
+                  className={`nav-link ${active ? "active" : ""}`}
+                  onMouseEnter={() => prefetchRouteData(href)}
+                  onFocus={() => prefetchRouteData(href)}
+                >
                   <Icon size={16} />
                   <span>{label}</span>
                 </Link>
@@ -45,7 +64,20 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
       </header>
       <main className="page-container">{children}</main>
-      <footer className="site-footer">数据来自企业公开招聘官网；岗位条目数不等于实际招聘人数。</footer>
+      <footer className="site-footer">数据来自企业公开招聘官网；岗位数量不等于实际招聘人数。</footer>
     </div>
   );
+}
+
+function prefetchRouteData(href: string) {
+  const requestsByRoute: Record<string, Array<[string, Record<string, string | number> | undefined]>> = {
+    "/": [["/api/v1/overview", undefined], ["/api/v1/trends/market", undefined]],
+    "/trends": [["/api/v1/trends/companies", undefined]],
+    "/categories": [["/api/v1/distributions/categories", undefined]],
+    "/cities": [["/api/v1/distributions/cities", undefined], ["/api/v1/meta/companies", undefined]],
+    "/jobs": [["/api/v1/jobs", { limit: 20, offset: 0 }], ["/api/v1/meta/companies", undefined]],
+    "/collection": [["/api/v1/collection/status", undefined]],
+  };
+  const requests = requestsByRoute[href] ?? [];
+  requests.forEach(([path, params]) => { void prefetchJson(path, params); });
 }

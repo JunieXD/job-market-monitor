@@ -1,5 +1,6 @@
 import argparse
 import asyncio
+import contextlib
 import hashlib
 import json
 import sys
@@ -48,6 +49,8 @@ from job_market.raw_store import RawStore
 from job_market.repository import Repository
 from job_market.runtime_checks import RuntimeChecker
 from job_market.schemas import Channel, CollectionResult
+
+PROGRESS_UPDATE_SECONDS = 2.0
 
 SOURCE_SPECS = {
     "bytedance": {
@@ -482,6 +485,39 @@ async def close_browser_stack(
     return errors
 
 
+def track_parsed_jobs(connector: Any) -> set[str]:
+    """Track unique parsed jobs without coupling every connector to persistence."""
+
+    discovered_ids: set[str] = set()
+    parse_job = getattr(connector, "parse_job", None)
+    if parse_job is None:
+        return discovered_ids
+
+    def tracked_parse_job(*args: Any, **kwargs: Any) -> Any:
+        record = parse_job(*args, **kwargs)
+        discovered_ids.add(record.external_id)
+        return record
+
+    connector.parse_job = tracked_parse_job
+    return discovered_ids
+
+
+async def report_collection_progress(
+    repository: Repository,
+    run_id: str,
+    connector: Any,
+    discovered_ids: set[str],
+) -> None:
+    while True:
+        await asyncio.sleep(PROGRESS_UPDATE_SECONDS)
+        await asyncio.to_thread(
+            repository.update_run_progress,
+            run_id,
+            discovered_count=len(discovered_ids),
+            page_count=max(0, int(getattr(connector, "pages_fetched", 0))),
+        )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="job-market")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -647,6 +683,7 @@ async def crawl(args: argparse.Namespace, settings: Settings) -> int:
         browser = None
         playwright = None
         network_metrics: BrowserNetworkMetrics | None = None
+        progress_task: asyncio.Task[None] | None = None
         try:
             if repository is not None and source_id is not None:
                 run_id = repository.start_run(source_id, channel.value)
@@ -676,6 +713,16 @@ async def crawl(args: argparse.Namespace, settings: Settings) -> int:
                 await network_metrics.attach_page(page)
                 network_metrics.watch_new_pages(context)
                 connector = spec["connector"](page, settings, raw_store)
+                if repository is not None:
+                    discovered_ids = track_parsed_jobs(connector)
+                    progress_task = asyncio.create_task(
+                        report_collection_progress(
+                            repository,
+                            run_id,
+                            connector,
+                            discovered_ids,
+                        )
+                    )
                 try:
                     async with asyncio.timeout(timeout_seconds):
                         result = await connector.collect(
@@ -705,9 +752,19 @@ async def crawl(args: argparse.Namespace, settings: Settings) -> int:
                 if repository is not None:
                     if not result.complete:
                         raise RuntimeError("Refusing to persist an incomplete collection")
+                    await asyncio.to_thread(
+                        repository.update_run_progress,
+                        run_id,
+                        discovered_count=len(result.jobs),
+                        page_count=result.pages_fetched,
+                    )
                     summary["database"] = repository.ingest(run_id, result)
                 print(json.dumps(summary, ensure_ascii=False, sort_keys=True))
             finally:
+                if progress_task is not None:
+                    progress_task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await progress_task
                 cleanup_errors = await close_browser_stack(context, browser, playwright)
                 if cleanup_errors:
                     print(

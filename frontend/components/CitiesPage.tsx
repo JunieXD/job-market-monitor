@@ -4,45 +4,76 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { EChartsOption } from "echarts";
 
 import { Chart } from "@/components/Chart";
+import { MultiSelectFilter } from "@/components/MultiSelectFilter";
 import { Pagination } from "@/components/Pagination";
 import { SelectField } from "@/components/SelectField";
 import { CoverageNotice, EmptyState, ErrorNotice, LoadingBlock, PageHeader, Panel, RefreshButton, TableWrap } from "@/components/ui";
-import { type CityRow, type Envelope, formatNumber, formatPercent, getJson } from "@/lib/api";
+import { type CityRow, type CompanyMeta, type Envelope, formatNumber, formatPercent, getCachedJson, getJson } from "@/lib/api";
 import { channelOptions } from "@/lib/labels";
 
 type GroupedCity = { key: string; name: string; postingCount: number; weightedCount: number; companies: number; share: number };
 
 export function CitiesPage() {
   const [channel, setChannel] = useState("all");
-  const [result, setResult] = useState<Envelope<CityRow> | null>(null);
+  const [companyKeys, setCompanyKeys] = useState<string[] | null>(null);
+  const [companies, setCompanies] = useState<CompanyMeta[]>(() => getCachedJson<{ data: CompanyMeta[] }>("/api/v1/meta/companies")?.data ?? []);
+  const [result, setResult] = useState<Envelope<CityRow> | null>(() => getCachedJson("/api/v1/distributions/cities"));
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(5);
   const load = useCallback(async () => {
-    setLoading(true); setError(null);
-    try { setResult(await getJson<Envelope<CityRow>>("/api/v1/distributions/cities", channel === "all" ? undefined : { channel })); }
+    const params = {
+      channel: channel === "all" ? undefined : channel,
+      company_keys: companyKeys ?? undefined,
+    };
+    const cachedCompanies = getCachedJson<{ data: CompanyMeta[] }>("/api/v1/meta/companies");
+    const cachedResult = getCachedJson<Envelope<CityRow>>("/api/v1/distributions/cities", params);
+    if (cachedCompanies) setCompanies(cachedCompanies.data);
+    if (cachedResult) setResult(cachedResult);
+    setLoading(!cachedResult); setError(null);
+    try {
+      const [companyResult, cityResult] = await Promise.all([
+        getJson<{ data: CompanyMeta[] }>("/api/v1/meta/companies"),
+        getJson<Envelope<CityRow>>("/api/v1/distributions/cities", params),
+      ]);
+      setCompanies(companyResult.data);
+      setResult(cityResult);
+    }
     catch (caught) { setError(caught instanceof Error ? caught.message : "暂时无法读取城市数据"); }
     finally { setLoading(false); }
-  }, [channel]);
+  }, [channel, companyKeys]);
   useEffect(() => { void load(); }, [load]);
   const rows = useMemo(() => groupCities(result?.data ?? []), [result?.data]);
+  const companyOptions = useMemo(() => companies.map((item) => ({ value: item.key, label: item.name })), [companies]);
   const chart = useMemo(() => cityOption(rows), [rows]);
   const pageCount = Math.max(1, Math.ceil(rows.length / pageSize));
   const currentPage = Math.min(page, pageCount);
   const visibleRows = rows.slice((currentPage - 1) * pageSize, currentPage * pageSize);
   const coverage = result?.meta.coverage;
+  const topFiveShare = rows.slice(0, 5).reduce((sum, row) => sum + row.share, 0);
+  const selectedCompanyCount = companyKeys?.length ?? companies.length;
   return (
     <>
-      <PageHeader eyebrow="城市分布" title="工作机会集中在哪些城市" description="按岗位地点统计城市热度；一个岗位覆盖多个城市时，份额会在这些城市之间平均分配。" actions={<><SelectField value={channel} options={channelOptions} onValueChange={setChannel} ariaLabel="选择招聘类型" /><RefreshButton onClick={() => void load()} loading={loading} /></>} />
+      <PageHeader eyebrow="城市分布" title="工作机会城市分布" description="比较公司与招聘类型在各城市的岗位数量。" actions={<RefreshButton onClick={() => void load()} loading={loading} />} />
       {error && <ErrorNotice message={error} />}
       {coverage && <CoverageNotice completed={coverage.standard_snapshot_count} total={coverage.configured_source_channel_count} />}
+      <div className="city-toolbar">
+        <MultiSelectFilter label="公司" options={companyOptions} values={companyKeys} onValuesChange={(values) => { setCompanyKeys(values); setPage(1); }} ariaLabel="筛选公司" minimumSelected={1} />
+        <SelectField value={channel} options={channelOptions} onValueChange={(value) => { setChannel(value); setPage(1); }} ariaLabel="选择招聘类型" />
+      </div>
+      <div className="city-insights" aria-label="城市分布摘要">
+        <div><span>覆盖城市</span><strong>{formatNumber(rows.length)}</strong></div>
+        <div><span>岗位最多</span><strong>{rows[0]?.name ?? "-"}</strong></div>
+        <div><span>前五城市占比</span><strong>{formatPercent(topFiveShare)}</strong></div>
+        <div><span>已选公司</span><strong>{formatNumber(selectedCompanyCount)}</strong></div>
+      </div>
       <div className="content-grid city-grid">
-        <Panel className="span-7" title="城市岗位热度" note="图表使用多城市岗位的加权岗位数，避免重复放大">
-          {loading ? <LoadingBlock /> : rows.length ? <Chart option={chart} ariaLabel="城市岗位热度排行" className="chart-tall" /> : <EmptyState title="暂无城市分布数据" />}
+        <Panel className="span-7 city-panel" title="城市岗位热度" note="一个岗位涉及多个城市时，按城市均分">
+          {loading && !result ? <LoadingBlock /> : rows.length ? <Chart option={chart} ariaLabel="城市岗位热度排行" className="chart-tall" /> : <EmptyState title="暂无城市分布数据" />}
         </Panel>
-        <Panel className="span-5" title="城市排行" note={`数据日期：${coverage?.snapshot_date ?? "暂无"}`}>
-          {loading ? <LoadingBlock /> : rows.length ? <><TableWrap><table className="compact-table fit-table"><thead><tr><th>城市</th><th className="numeric">关联岗位</th><th className="numeric">加权份额</th></tr></thead><tbody>{visibleRows.map((row, index) => <tr key={row.key}><td><span className="rank">{(currentPage - 1) * pageSize + index + 1}</span>{row.name}</td><td className="numeric">{formatNumber(row.postingCount)}</td><td className="numeric">{formatPercent(row.share)}</td></tr>)}</tbody></table></TableWrap><Pagination total={rows.length} page={currentPage} pageSize={pageSize} onPageChange={setPage} onPageSizeChange={(size) => { setPageSize(size); setPage(1); }} itemLabel="个城市" /></> : <EmptyState title="暂无城市排行" />}
+        <Panel className="span-5 city-panel" title="城市排行" note={coverage?.snapshot_date ? `更新至 ${coverage.snapshot_date}` : "暂无数据"}>
+          {loading && !result ? <LoadingBlock /> : rows.length ? <><TableWrap><table className="compact-table fit-table city-table"><thead><tr><th>城市</th><th>岗位</th><th>公司</th><th>占比</th></tr></thead><tbody>{visibleRows.map((row, index) => <tr key={row.key}><td><span className="rank">{(currentPage - 1) * pageSize + index + 1}</span>{row.name}</td><td>{formatNumber(row.postingCount)}</td><td>{formatNumber(row.companies)}</td><td>{formatPercent(row.share)}</td></tr>)}</tbody></table></TableWrap><Pagination total={rows.length} page={currentPage} pageSize={pageSize} onPageChange={setPage} onPageSizeChange={(size) => { setPageSize(size); setPage(1); }} itemLabel="个城市" /></> : <EmptyState title="暂无城市排行" />}
         </Panel>
       </div>
     </>
@@ -51,12 +82,16 @@ export function CitiesPage() {
 
 function groupCities(rows: CityRow[]): GroupedCity[] {
   const grouped = new Map<string, GroupedCity>();
+  const companySets = new Map<string, Set<string>>();
   rows.forEach((row) => {
     const key = row.canonical_location_key ?? row.city_name;
     const current = grouped.get(key) ?? { key, name: row.city_name, postingCount: 0, weightedCount: 0, companies: 0, share: 0 };
     current.postingCount += row.posting_count;
     current.weightedCount += Number(row.fractional_posting_count);
-    current.companies = Math.max(current.companies, row.covered_company_count ?? 0);
+    const companySet = companySets.get(key) ?? new Set<string>();
+    if (row.company_key) companySet.add(row.company_key);
+    companySets.set(key, companySet);
+    current.companies = Math.max(current.companies, row.covered_company_count ?? companySet.size);
     grouped.set(key, current);
   });
   const total = [...grouped.values()].reduce((sum, row) => sum + row.weightedCount, 0);

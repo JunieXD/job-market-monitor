@@ -7,41 +7,53 @@ import { MultiSelectFilter } from "@/components/MultiSelectFilter";
 import { Pagination } from "@/components/Pagination";
 import { SearchField } from "@/components/SearchField";
 import { ChannelTag, EmptyState, ErrorNotice, LoadingBlock, MetricCard, PageHeader, Panel, RefreshButton, TableWrap } from "@/components/ui";
-import { type CollectionStatus, formatDateTime, formatNumber, formatPercent, getJson } from "@/lib/api";
+import { type CollectionStatus, formatDateTime, formatNumber, formatPercent, getCachedJson, getJson } from "@/lib/api";
 import { collectionStateLabel } from "@/lib/labels";
 import { channelOptions } from "@/lib/labels";
 import { matchesSubsequence } from "@/lib/search";
 
 const searchScopes = [
-  { value: "all", label: "全部字段" },
   { value: "company", label: "公司名称" },
   { value: "source", label: "招聘站名称" },
-  { value: "error", label: "错误信息" },
+  { value: "error", label: "异常信息" },
 ];
 const stateOptions = ["running", "failed", "partial", "completed", "pending"].map((value) => ({ value, label: collectionStateLabel(value) }));
 const filterChannelOptions = channelOptions.filter((option) => option.value !== "all");
 
 export function CollectionPage() {
-  const [data, setData] = useState<CollectionStatus | null>(null);
+  const [data, setData] = useState<CollectionStatus | null>(() => getCachedJson("/api/v1/collection/status"));
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
-  const [queryField, setQueryField] = useState("all");
+  const [queryFields, setQueryFields] = useState<string[] | null>(null);
   const [companies, setCompanies] = useState<string[] | null>(null);
   const [channels, setChannels] = useState<string[] | null>(null);
   const [states, setStates] = useState<string[] | null>(null);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
-  const load = useCallback(async (quiet = false) => {
-    if (!quiet) setLoading(true);
-    try { setData(await getJson<CollectionStatus>("/api/v1/collection/status")); setError(null); }
+  const load = useCallback(async (quiet = false): Promise<CollectionStatus | null> => {
+    const cached = getCachedJson<CollectionStatus>("/api/v1/collection/status");
+    if (!quiet) setLoading(!cached);
+    if (cached) setData(cached);
+    try {
+      const next = await getJson<CollectionStatus>("/api/v1/collection/status");
+      setData(next); setError(null); return next;
+    }
     catch (caught) { setError(caught instanceof Error ? caught.message : "暂时无法读取采集状态"); }
     finally { if (!quiet) setLoading(false); }
+    return null;
   }, []);
   useEffect(() => {
-    void load();
-    const timer = window.setInterval(() => { void load(true); }, 15_000);
-    return () => window.clearInterval(timer);
+    let stopped = false;
+    let timer: number | undefined;
+    async function refresh() {
+      const next = await load(true);
+      if (!stopped) timer = window.setTimeout(refresh, next?.summary.running ? 5_000 : 30_000);
+    }
+    void load().then((next) => {
+      if (!stopped) timer = window.setTimeout(refresh, next?.summary.running ? 5_000 : 30_000);
+    });
+    return () => { stopped = true; if (timer) window.clearTimeout(timer); };
   }, [load]);
 
   const summary = data?.summary;
@@ -52,33 +64,39 @@ export function CollectionPage() {
     if (companies !== null && !companies.includes(row.company_key)) return false;
     if (channels !== null && !channels.includes(row.channel)) return false;
     if (states !== null && !states.includes(row.state)) return false;
-    const fields = queryField === "company" ? [row.company_name] : queryField === "source" ? [row.display_name] : queryField === "error" ? [row.error_summary ?? ""] : [row.company_name, row.display_name, row.error_summary ?? ""];
+    const selectedFields = queryFields ?? searchScopes.map((scope) => scope.value);
+    const fields = selectedFields.map((field) => field === "company" ? row.company_name : field === "source" ? row.display_name : row.error_summary ?? "");
     return fields.some((field) => matchesSubsequence(field, query));
-  }), [channels, companies, query, queryField, sorted, states]);
+  }), [channels, companies, query, queryFields, sorted, states]);
   const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
   const currentPage = Math.min(page, pageCount);
   const visibleRows = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize);
   return (
     <>
-      <PageHeader eyebrow="采集运行" title="今天的数据采集到哪一步了" description="页面每 15 秒自动更新。单个招聘网站失败不会阻止其他来源继续采集。" actions={<RefreshButton onClick={() => void load()} loading={loading} />} />
+      <PageHeader eyebrow="数据采集" title="今日数据采集情况" description="查看各招聘网站的数据更新时间与采集进度。" actions={<RefreshButton onClick={() => void load()} loading={loading} />} />
       {error && <ErrorNotice message={error} />}
-      <div className="schedule-strip"><div><Clock3 size={18} /><span>{scheduleText}</span></div><div><span>下次计划运行</span><strong>{formatDateTime(data?.schedule.next_run_at)}</strong></div><div><span>当前数据日期</span><strong>{data?.snapshot_date ?? "暂无"}</strong></div></div>
+      <div className="schedule-strip"><div><Clock3 size={18} /><span>{scheduleText}</span></div><div><span>下次采集</span><strong>{formatDateTime(data?.schedule.next_run_at)}</strong></div><div><span>数据更新至</span><strong>{data?.snapshot_date ?? "暂无"}</strong></div></div>
       <section className="metric-grid" aria-label="采集进度指标">
-        <MetricCard icon={<DatabaseZap size={17} />} label="今日完成进度" value={formatPercent(summary?.progress_ratio)} detail={`${summary?.completed ?? 0} / ${summary?.total ?? 0} 个来源渠道`} />
-        <MetricCard icon={<LoaderCircle size={17} />} label="正在采集" value={formatNumber(summary?.running)} detail={`最近活动 ${formatDateTime(summary?.last_activity_at)}`} tone="blue" />
-        <MetricCard icon={<CheckCircle2 size={17} />} label="采集完成" value={formatNumber(summary?.completed)} detail="已生成今日标准快照" tone="amber" />
-        <MetricCard icon={<TriangleAlert size={17} />} label="需要关注" value={formatNumber((summary?.failed ?? 0) + (summary?.partial ?? 0))} detail={`${summary?.failed ?? 0} 个失败，${summary?.partial ?? 0} 个结果不完整`} tone="coral" />
+        <MetricCard icon={<DatabaseZap size={17} />} label="采集进度" value={formatPercent(summary?.progress_ratio)} detail={`${summary?.completed ?? 0} / ${summary?.total ?? 0} 个招聘渠道`} />
+        <MetricCard icon={<LoaderCircle size={17} />} label="采集中" value={formatNumber(summary?.running)} detail="运行中的招聘渠道" tone="blue" />
+        <MetricCard icon={<CheckCircle2 size={17} />} label="已完成" value={formatNumber(summary?.completed)} detail="今日已更新的招聘渠道" tone="amber" />
+        <MetricCard icon={<TriangleAlert size={17} />} label="异常" value={formatNumber((summary?.failed ?? 0) + (summary?.partial ?? 0))} detail={`${summary?.failed ?? 0} 个失败 · ${summary?.partial ?? 0} 个不完整`} tone="coral" />
       </section>
       <div className="search-toolbar collection-toolbar">
-        <SearchField value={query} onValueChange={(value) => { setQuery(value); setPage(1); }} scope={queryField} scopes={searchScopes} onScopeChange={(value) => { setQueryField(value); setPage(1); }} placeholder="搜索公司、招聘站或错误" ariaLabel="搜索采集来源" />
+        <SearchField value={query} onValueChange={(value) => { setQuery(value); setPage(1); }} scopesValue={queryFields} scopes={searchScopes} onScopesChange={(values) => { setQueryFields(values); setPage(1); }} placeholder="搜索采集记录" ariaLabel="搜索采集来源" />
         <MultiSelectFilter label="公司" options={companyOptions} values={companies} onValuesChange={(values) => { setCompanies(values); setPage(1); }} ariaLabel="筛选采集公司" />
         <MultiSelectFilter label="招聘类型" options={filterChannelOptions} values={channels} onValuesChange={(values) => { setChannels(values); setPage(1); }} ariaLabel="筛选采集招聘类型" />
         <MultiSelectFilter label="状态" options={stateOptions} values={states} onValuesChange={(values) => { setStates(values); setPage(1); }} ariaLabel="筛选采集状态" />
       </div>
-      <Panel title="今日采集进度" note="完成状态表示该来源渠道已经生成当天最新标准快照">
+      <Panel title="招聘网站采集进度">
         <div className="progress-track" aria-label={`今日采集完成 ${formatPercent(summary?.progress_ratio)}`}><span style={{ width: `${Math.round((summary?.progress_ratio ?? 0) * 100)}%` }} /></div>
-        {loading ? <LoadingBlock /> : visibleRows.length ? <><TableWrap><table><thead><tr><th>公司与招聘站</th><th>招聘类型</th><th>状态</th><th>开始时间</th><th className="numeric">岗位</th><th className="numeric">页面</th><th>最近标准快照</th></tr></thead><tbody>{visibleRows.map((row) => <tr key={`${row.source_key}-${row.channel}`}><td><strong>{row.company_name}</strong><span className="cell-note">{row.display_name}</span>{row.error_summary && <span className="cell-error">{row.error_summary}</span>}</td><td><ChannelTag channel={row.channel} /></td><td><span className={`status-badge ${row.state}`}>{row.state === "running" && <LoaderCircle size={13} className="spin" />}{collectionStateLabel(row.state)}</span></td><td>{formatDateTime(row.started_at)}</td><td className="numeric">{row.discovered_count == null ? "-" : formatNumber(row.discovered_count)}</td><td className="numeric">{row.page_count == null ? "-" : formatNumber(row.page_count)}</td><td>{row.last_standard_date ?? "尚未完成"}</td></tr>)}</tbody></table></TableWrap><Pagination total={filtered.length} page={currentPage} pageSize={pageSize} onPageChange={setPage} onPageSizeChange={(size) => { setPageSize(size); setPage(1); }} itemLabel="个来源渠道" /></> : <EmptyState title={sorted.length ? "没有符合筛选条件的来源" : "还没有配置采集来源"} detail={sorted.length ? "可以清除部分筛选条件后重试。" : undefined} />}
+        {loading && !data ? <LoadingBlock /> : visibleRows.length ? <><TableWrap><table className="fit-table collection-table"><thead><tr><th>公司与招聘网站</th><th>招聘类型</th><th>状态</th><th>采集开始</th><th>已发现岗位</th><th>已抓页面</th><th>数据更新至</th></tr></thead><tbody>{visibleRows.map((row) => <tr key={`${row.source_key}-${row.channel}`}><td><strong>{row.company_name}</strong><span className="cell-note">{row.display_name}</span></td><td><ChannelTag channel={row.channel} /></td><td><span className={`status-badge ${row.state}`}>{row.state === "running" && <LoaderCircle size={13} className="spin" />}{collectionStateLabel(row.state)}</span></td><td>{formatDateTime(row.started_at)}</td><td>{progressValue(row.state, row.discovered_count, "统计中")}</td><td>{progressValue(row.state, row.page_count, "准备中")}</td><td>{row.last_standard_date ?? "-"}</td></tr>)}</tbody></table></TableWrap><Pagination total={filtered.length} page={currentPage} pageSize={pageSize} onPageChange={setPage} onPageSizeChange={(size) => { setPageSize(size); setPage(1); }} itemLabel="个招聘渠道" /></> : <EmptyState title={sorted.length ? "没有符合条件的招聘渠道" : "暂无采集来源"} detail={sorted.length ? "请调整筛选条件。" : undefined} />}
       </Panel>
     </>
   );
+}
+
+function progressValue(state: string, value: number | null, pendingText: string): string {
+  if (state === "running" && !value) return pendingText;
+  return value == null ? "-" : formatNumber(value);
 }

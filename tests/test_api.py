@@ -100,6 +100,21 @@ def test_api_exposes_health_overview_and_read_only_job_queries() -> None:
         )
         assert wrong_field.json()["meta"]["pagination"]["total"] == 0
 
+        multiple_fields = client.get(
+            "/api/v1/jobs",
+            params=[
+                ("query", "Python"),
+                ("query_fields", "title"),
+                ("query_fields", "requirements"),
+            ],
+        )
+        assert multiple_fields.status_code == 200
+        assert multiple_fields.json()["meta"]["pagination"]["total"] == 1
+        assert multiple_fields.json()["meta"]["filters"]["query_fields"] == [
+            "title",
+            "requirements",
+        ]
+
         filtered_jobs = client.get(
             "/api/v1/jobs",
             params=[
@@ -150,9 +165,53 @@ def test_api_returns_analysis_envelopes_for_categories_and_cities() -> None:
         assert cities.status_code == 200
         assert cities.json()["data"][0]["city_name"] == "北京"
 
+        selected_cities = client.get(
+            "/api/v1/distributions/cities",
+            params=[
+                ("company_keys", "bytedance"),
+                ("company_keys", "missing-company"),
+            ],
+        )
+        assert selected_cities.status_code == 200
+        assert selected_cities.json()["data"][0]["company_key"] == "bytedance"
+        assert selected_cities.json()["meta"]["filters"]["company_keys"] == [
+            "bytedance",
+            "missing-company",
+        ]
+
         sources = client.get("/api/v1/meta/sources")
         assert sources.status_code == 200
         assert {row["channel"] for row in sources.json()["data"]} == {
             "campus",
             "experienced",
         }
+
+
+def test_collection_status_exposes_progress_for_running_channel() -> None:
+    engine = create_engine(
+        "sqlite+pysqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    create_schema(engine)
+    repository = Repository(engine)
+    source_id = repository.ensure_source()
+    run_id = repository.start_run(source_id, Channel.CAMPUS.value)
+    repository.update_run_progress(
+        run_id,
+        discovered_count=37,
+        page_count=4,
+    )
+
+    with TestClient(create_app(engine=engine, settings=Settings())) as client:
+        response = client.get("/api/v1/collection/status")
+
+    assert response.status_code == 200
+    running = next(
+        row
+        for row in response.json()["channels"]
+        if row["channel"] == Channel.CAMPUS.value
+    )
+    assert running["state"] == "running"
+    assert running["discovered_count"] == 37
+    assert running["page_count"] == 4

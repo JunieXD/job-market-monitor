@@ -160,12 +160,17 @@ class AnalyticsRepository:
         self,
         *,
         company_key: str | None = None,
+        company_keys: list[str] | None = None,
         snapshot_date: date | None = None,
         channel: str | None = None,
     ) -> list[dict[str, Any]]:
+        selected_companies = list(
+            dict.fromkeys([company_key, *(company_keys or [])])
+        )
+        selected_companies = [key for key in selected_companies if key is not None]
         return self._city_query(
-            market=company_key is None,
-            company_key=company_key,
+            market=not selected_companies,
+            company_keys=selected_companies,
             snapshot_date=snapshot_date,
             channel=channel,
         )
@@ -330,15 +335,19 @@ class AnalyticsRepository:
         self,
         *,
         market: bool,
-        company_key: str | None = None,
+        company_keys: list[str],
         snapshot_date: date | None = None,
         channel: str | None = None,
     ) -> list[dict[str, Any]]:
         filters: list[str] = []
         params: dict[str, object] = {}
-        if company_key is not None:
-            filters.append("c.key = :company_key")
-            params["company_key"] = company_key
+        if company_keys:
+            placeholders = []
+            for index, company_key in enumerate(company_keys):
+                name = f"company_key_{index}"
+                placeholders.append(f":{name}")
+                params[name] = company_key
+            filters.append(f"c.key IN ({', '.join(placeholders)})")
         if snapshot_date is not None:
             filters.append("ds.snapshot_date = :snapshot_date")
             params["snapshot_date"] = snapshot_date

@@ -5,7 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import job_market.cli as cli
-from job_market.cli import category_summary, collection_hash
+from job_market.cli import category_summary, collection_hash, track_parsed_jobs
 from job_market.schemas import (
     CategoryAssignmentMethod,
     Channel,
@@ -99,6 +99,32 @@ def test_collection_hash_is_stable_across_job_order() -> None:
     assert collection_hash(first) == collection_hash(second)
 
 
+def test_connector_progress_tracks_unique_parsed_jobs() -> None:
+    class Connector:
+        @staticmethod
+        def parse_job(external_id: str) -> JobRecord:
+            return JobRecord(
+                source_key="example",
+                external_id=external_id,
+                source_url=f"https://example.test/{external_id}",
+                company_name="示例公司",
+                channel=Channel.EXPERIENCED,
+                employment_type_id="social",
+                employment_type_name="社会招聘",
+                title="示例岗位",
+                source_payload={"id": external_id},
+            )
+
+    connector = Connector()
+    discovered_ids = track_parsed_jobs(connector)
+
+    connector.parse_job("a")
+    connector.parse_job("b")
+    connector.parse_job("a")
+
+    assert discovered_ids == {"a", "b"}
+
+
 def test_source_summary_is_derived_from_registry(monkeypatch, capsys) -> None:
     monkeypatch.setattr(
         sys,
@@ -124,6 +150,7 @@ class FakeRepository:
     def __init__(self, due_channels: set[str] | None = None) -> None:
         self.failed: list[tuple[str, str, list]] = []
         self.ingested: list[str] = []
+        self.progress: list[tuple[str, int, int]] = []
         self.due_channels = due_channels
 
     def ensure_source(self, **kwargs) -> int:
@@ -135,6 +162,16 @@ class FakeRepository:
     def ingest(self, run_id: str, result: CollectionResult) -> dict[str, int]:
         self.ingested.append(run_id)
         return {"discovered": len(result.jobs)}
+
+    def update_run_progress(
+        self,
+        run_id: str,
+        *,
+        discovered_count: int,
+        page_count: int,
+    ) -> bool:
+        self.progress.append((run_id, discovered_count, page_count))
+        return True
 
     def fail_run(self, run_id: str, error: str, snapshots: list) -> None:
         self.failed.append((run_id, error, snapshots))

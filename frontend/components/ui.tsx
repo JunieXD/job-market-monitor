@@ -72,7 +72,7 @@ export function CoverageNotice({ completed, total }: { completed: number; total:
   return (
     <div className="notice" role="status">
       <AlertTriangle size={17} />
-      <span>当前日期完成了 {completed} / {total} 个来源渠道，所有分析仅代表已完成日快照的数据。</span>
+      <span>今日数据尚未全部更新（{completed} / {total}），当前结果基于已完成数据。</span>
     </div>
   );
 }
@@ -94,7 +94,7 @@ export function LoadingBlock() {
   return <div className="state-block" aria-label="正在加载"><div><span className="skeleton wide" /><span className="skeleton" /></div></div>;
 }
 
-export function EmptyState({ title, detail = "当前条件下没有可展示的日快照。" }: { title: string; detail?: string }) {
+export function EmptyState({ title, detail = "当前条件下暂无数据。" }: { title: string; detail?: string }) {
   return <div className="state-block"><div><strong>{title}</strong><span>{detail}</span></div></div>;
 }
 

@@ -113,6 +113,40 @@ def make_repository(*, missing_runs_before_close: int = 2) -> tuple[Repository, 
     )
 
 
+def test_running_progress_is_monotonic_and_stops_after_completion() -> None:
+    repository, _ = make_repository()
+    source_id = repository.ensure_source()
+    run_id = repository.start_run(source_id, Channel.CAMPUS.value)
+
+    assert repository.update_run_progress(
+        run_id,
+        discovered_count=12,
+        page_count=3,
+    )
+    assert repository.update_run_progress(
+        run_id,
+        discovered_count=8,
+        page_count=2,
+    )
+    with Session(repository.engine) as session:
+        run = session.get(CrawlRun, run_id)
+        assert run is not None
+        assert run.discovered_count == 12
+        assert run.page_count == 3
+
+    repository.ingest(run_id, result([make_job()]))
+    assert not repository.update_run_progress(
+        run_id,
+        discovered_count=99,
+        page_count=99,
+    )
+    with Session(repository.engine) as session:
+        run = session.get(CrawlRun, run_id)
+        assert run is not None
+        assert run.discovered_count == 1
+        assert run.page_count == 1
+
+
 def test_job_closes_across_daily_snapshots_and_reopens_with_history() -> None:
     repository, clock = make_repository()
     source_id = repository.ensure_source()

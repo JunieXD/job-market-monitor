@@ -48,6 +48,8 @@ export type CategoryRow = {
 
 export type CityRow = {
   city_name: string;
+  company_key?: string;
+  company_name?: string;
   canonical_location_key?: string | null;
   posting_count: number;
   fractional_posting_count: number;
@@ -125,6 +127,40 @@ export async function getJson<T>(
   path: string,
   params?: Record<string, string | number | string[] | null | undefined>,
 ): Promise<T> {
+  const url = buildUrl(path, params);
+  const pending = pendingRequests.get(url) as Promise<T> | undefined;
+  if (pending) return pending;
+  const request = fetch(url, { cache: "no-store" })
+    .then(async (response) => {
+      if (!response.ok) throw new Error(`API 请求失败（${response.status}）`);
+      const payload = await response.json() as T;
+      responseCache.set(url, payload);
+      return payload;
+    })
+    .finally(() => pendingRequests.delete(url));
+  pendingRequests.set(url, request as Promise<unknown>);
+  return request;
+}
+
+export function getCachedJson<T>(
+  path: string,
+  params?: Record<string, string | number | string[] | null | undefined>,
+): T | null {
+  return (responseCache.get(buildUrl(path, params)) as T | undefined) ?? null;
+}
+
+export async function prefetchJson(
+  path: string,
+  params?: Record<string, string | number | string[] | null | undefined>,
+): Promise<void> {
+  if (getCachedJson(path, params) !== null) return;
+  await getJson(path, params).then(() => undefined).catch(() => undefined);
+}
+
+function buildUrl(
+  path: string,
+  params?: Record<string, string | number | string[] | null | undefined>,
+): string {
   const search = new URLSearchParams();
   Object.entries(params ?? {}).forEach(([key, value]) => {
     if (Array.isArray(value)) {
@@ -133,14 +169,11 @@ export async function getJson<T>(
       search.set(key, String(value));
     }
   });
-  const response = await fetch(`${path}${search.size ? `?${search.toString()}` : ""}`, {
-    cache: "no-store",
-  });
-  if (!response.ok) {
-    throw new Error(`API 请求失败（${response.status}）`);
-  }
-  return response.json() as Promise<T>;
+  return `${path}${search.size ? `?${search.toString()}` : ""}`;
 }
+
+const responseCache = new Map<string, unknown>();
+const pendingRequests = new Map<string, Promise<unknown>>();
 
 export function formatNumber(value: number | undefined): string {
   return new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 1 }).format(value ?? 0);

@@ -209,6 +209,17 @@ def test_market_city_view_unifies_same_city_across_sources() -> None:
     assert len(beijing) == 1
     assert beijing[0]["posting_count"] == 2
     assert beijing[0]["covered_company_count"] == 2
+
+    selected_rows = AnalyticsRepository(engine).city_distribution(
+        company_keys=["bytedance", "alibaba"],
+        snapshot_date=clock().date(),
+        channel=Channel.CAMPUS.value,
+    )
+    assert {row["company_key"] for row in selected_rows} == {
+        "bytedance",
+        "alibaba",
+    }
+    assert [row["city_name"] for row in selected_rows] == ["北京", "北京"]
     assert DataQualityChecker(engine).run()["ok"] is True
 
 
