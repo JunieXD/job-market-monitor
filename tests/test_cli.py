@@ -94,9 +94,10 @@ def test_source_summary_is_derived_from_registry(monkeypatch, capsys) -> None:
 
 
 class FakeRepository:
-    def __init__(self) -> None:
+    def __init__(self, due_channels: set[str] | None = None) -> None:
         self.failed: list[tuple[str, str, list]] = []
         self.ingested: list[str] = []
+        self.due_channels = due_channels
 
     def ensure_source(self, **kwargs) -> int:
         return 1
@@ -110,6 +111,12 @@ class FakeRepository:
 
     def fail_run(self, run_id: str, error: str, snapshots: list) -> None:
         self.failed.append((run_id, error, snapshots))
+
+    def due_source_channels(self) -> dict[str, set[str]]:
+        channels = self.due_channels
+        if channels is None:
+            channels = {Channel.EXPERIENCED.value}
+        return {"test_source": channels} if channels else {}
 
 
 class SuccessfulConnector:
@@ -139,8 +146,10 @@ async def run_crawl_case(
     *,
     launch_error: Exception | None = None,
     context_close_error: Exception | None = None,
+    due_only: bool = False,
+    due_channels: set[str] | None = None,
 ):
-    repository = FakeRepository()
+    repository = FakeRepository(due_channels)
     state: list[str] = []
 
     class Context:
@@ -196,6 +205,21 @@ async def run_crawl_case(
     monkeypatch.setattr(cli, "Repository", lambda engine, missing: repository)
     monkeypatch.setattr(cli, "async_playwright", lambda: Starter())
 
+    class NetworkMetrics:
+        async def install_policy(self, context) -> None:
+            return None
+
+        async def attach_page(self, page) -> None:
+            return None
+
+        def watch_new_pages(self, context) -> None:
+            return None
+
+        async def snapshot(self) -> dict[str, int]:
+            return {}
+
+    monkeypatch.setattr(cli, "BrowserNetworkMetrics", NetworkMetrics)
+
     args = argparse.Namespace(
         source="test-source",
         channel=Channel.EXPERIENCED.value,
@@ -203,12 +227,15 @@ async def run_crawl_case(
         dry_run=False,
         max_pages=None,
         timeout_seconds=60,
+        due_only=due_only,
     )
     settings = SimpleNamespace(
         crawl_channel_timeout_seconds=60,
         missing_runs_before_close=2,
         raw_data_dir=tmp_path,
         headless=True,
+        crawl_block_nonessential_resources=True,
+        crawl_block_service_workers=True,
     )
     return await cli.crawl(args, settings), repository, state
 
@@ -259,3 +286,22 @@ async def test_cleanup_error_does_not_override_successful_run(
     assert repository.failed == []
     assert state[-3:] == ["context.close", "browser.close", "playwright.stop"]
     assert "cleanup_warnings" in capsys.readouterr().err
+
+
+async def test_due_only_skips_source_without_missing_channels(
+    monkeypatch,
+    tmp_path: Path,
+    capsys,
+) -> None:
+    exit_code, repository, state = await run_crawl_case(
+        monkeypatch,
+        tmp_path,
+        SuccessfulConnector,
+        due_only=True,
+        due_channels=set(),
+    )
+
+    assert exit_code == 0
+    assert repository.ingested == []
+    assert state == []
+    assert "all_channels_already_collected_today" in capsys.readouterr().out

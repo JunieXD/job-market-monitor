@@ -75,6 +75,10 @@ docker compose run --rm collector crawl \
 被记录并继续运行后续来源；批次末尾会执行统一检查，任何失败都会让 service 返回非零状态。
 当天已经完成全部渠道的来源自动跳过，因此 timer 重启或重复触发不会重复采集完整来源。
 
+默认最多并发 2 个来源，来源启动间隔 3 秒。并发只跨来源发生，同一来源的多个渠道仍按顺序执行；
+单来源失败或超时不会取消其他来源。Ubuntu 资源较紧时先设为 `MAX_PARALLEL_SOURCES=1`，完成
+矩阵实验后再提升；不要把并发数直接等同于 CPU 核数。
+
 ```bash
 sudo install -m 0644 deploy/systemd/job-market-crawl.service \
   /etc/systemd/system/job-market-crawl.service
@@ -100,6 +104,10 @@ systemctl status job-market-crawl.service --no-pager
 
 默认每天上海时间 03:15 运行，带有持久化触发和最多 5 分钟的随机延迟。批次总超时为 23 小时，
 单来源默认超时为 3 小时；可以在 service 的环境变量中按服务器资源调整。
+
+采集器的 `CRAWL_BLOCK_NONESSENTIAL_RESOURCES=true` 和 `CRAWL_BLOCK_SERVICE_WORKERS=true` 默认开启。
+前者通过 CDP URL 模式阻止图片、字体、音视频而保留 HTTP 缓存；后者阻止后台 Service Worker。
+遇到某个站点页面依赖被阻止资源时，应只对该来源做小范围对照测试后再决定是否关闭，不要全局关闭。
 
 ## 运行前检查
 

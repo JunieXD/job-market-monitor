@@ -33,9 +33,31 @@ def test_netease_job_keeps_mixed_work_type_and_direct_requirements() -> None:
 
 
 def test_netease_rejects_empty_non_terminal_page() -> None:
-    payload = {"data": {"list": [], "pages": 2, "total": 11}}
+    payload = {"data": {"list": [], "pages": 2, "total": 201}}
 
-    with pytest.raises(RuntimeError, match="empty non-terminal"):
+    with pytest.raises(RuntimeError, match="row mismatch"):
+        NetEaseConnector._page_data(payload, 1)
+
+
+def test_netease_validates_large_final_page_shape() -> None:
+    payload = {
+        "data": {
+            "list": [{"id": str(index)} for index in range(157)],
+            "pages": 13,
+            "total": 2557,
+        }
+    }
+
+    page = NetEaseConnector._page_data(payload, 13)
+
+    assert page["total"] == 2557
+    assert len(page["rows"]) == 157
+
+
+def test_netease_rejects_pagination_metadata_mismatch() -> None:
+    payload = {"data": {"list": [{}] * 200, "pages": 14, "total": 2557}}
+
+    with pytest.raises(RuntimeError, match="metadata mismatch"):
         NetEaseConnector._page_data(payload, 1)
 
 

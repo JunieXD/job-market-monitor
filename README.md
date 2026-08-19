@@ -23,7 +23,7 @@
 | 原始数据 | gzip JSON，保存在 Docker named volume，不进入 Git |
 | 定时运行 | Ubuntu systemd timer，每天上海时间 03:15 运行，同日已完成来源自动跳过 |
 | 分析网站 | Next.js 多页面网站：总览、趋势、岗位分类、城市、岗位、采集状态 |
-| 测试 | 165 passed，1 skipped；前端 TypeScript 和生产构建通过 |
+| 测试 | 178 passed，1 skipped；前端 TypeScript 和生产构建通过 |
 | 当前阶段 | Ubuntu 虚拟机连续真实采集试运行；生产服务器暂不部署 |
 
 ## 已接入来源
@@ -57,6 +57,20 @@ uv run job-market list-sources --format json
 
 当前不会从职位描述自行生成 topic、技能、专业或岗位类别。官网直接返回的业务单元（例如阿里
 `circleCodeList`/`circleNames`）只作为来源事实维度保存，不等同于项目自定义标签。
+
+## 并发与流量控制
+
+定时批次按来源并发、来源内部渠道串行。当前 Ubuntu 试运行默认最多同时运行 2 个来源，每个来源
+启动间隔 3 秒；同一批次由 `flock` 防重入，来源有独立超时、重试和容器清理。PostgreSQL 的
+事务级 advisory lock 只保护公司/来源维度、岗位入库和生命周期写入，不会把网络抓取重新变成串行。
+默认值由虚拟机实验确认后再调整，可通过 systemd unit 中的 `MAX_PARALLEL_SOURCES` 和
+`SOURCE_START_DELAY_SECONDS` 覆盖。
+
+采集器默认阻止常见图片、字体、音视频 URL 和 Service Worker。资源阻止使用 Chromium CDP，避免
+Playwright `context.route` 关闭 HTTP 缓存；岗位 JSON、脚本和必要的接口请求仍保留。每个渠道输出
+请求数、响应数、按资源类型的接收字节和失败数；跨连接器的最终网络账单以 Docker `NET I/O` 为准。
+腾讯、京东和网易已验证官方接口的大页长，连接器会校验官网声明总数、页数、行数和唯一岗位并集，
+不会为了省流量丢弃岗位事实。
 
 ## 数据模型能支持什么
 
@@ -234,6 +248,7 @@ cd frontend && npm run lint && npm run build
 | [数据源目录](docs/source-catalog.md) | 已接入官网、渠道范围、计数边界和已知限制 |
 | [指标定义](docs/metrics.md) | 岗位趋势、生命周期和公司/来源统计口径 |
 | [部署说明](docs/deployment.md) | 本地 Ubuntu 验证、已有 PostgreSQL 和 systemd 定时任务 |
+| [并发与流量实验](docs/concurrency-and-bandwidth.md) | 并发模型、网络节流、接口大页长和 Ubuntu 矩阵实验 |
 | [网站与 API 实施计划](docs/web-api-plan.md) | 页面、接口、验收标准和分阶段提交目标 |
 | [Ubuntu 连续试运行](docs/ubuntu-trial.md) | 每日真实采集、网站常驻、进度观察和多日验收方法 |
 | [贡献指南](CONTRIBUTING.md) | 新增连接器、fixture、测试和数据安全要求 |

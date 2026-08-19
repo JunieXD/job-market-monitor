@@ -3,6 +3,7 @@
 import asyncio
 import json
 from datetime import UTC, datetime
+from math import ceil
 from typing import Any
 
 from playwright.async_api import Page, Response
@@ -28,6 +29,9 @@ from job_market.schemas import (
 
 RESPONSE_TIMEOUT_SECONDS = 30
 POSITION_LIST_URL = "https://zhaopin.jd.com/web/job/job_info_list/3"
+POSITION_API_URL = "https://zhaopin.jd.com/web/job/job_list"
+UI_PAGE_SIZE = 10
+COLLECTION_PAGE_SIZE = 100
 
 
 class JDConnector:
@@ -54,17 +58,25 @@ class JDConnector:
         if channel is not Channel.EXPERIENCED:
             raise ValueError("JD connector supports only the experienced channel")
 
-        payload = await self._open_first_page()
-        total_pages = await self._read_total_pages()
+        await self._open_first_page()
+        ui_total_pages = await self._read_total_pages()
+        total_pages = ceil(ui_total_pages * UI_PAGE_SIZE / COLLECTION_PAGE_SIZE)
         jobs_by_id: dict[str, JobRecord] = {}
+        collected_rows = 0
         complete = True
 
         for page_number in range(1, total_pages + 1):
             if max_pages is not None and self.pages_fetched >= max_pages:
                 complete = False
                 break
-            await self._assert_active_page(page_number)
+            payload = await self._fetch_collection_page(page_number)
             rows = self._validate_rows(payload, page_number)
+            if page_number < total_pages and len(rows) != COLLECTION_PAGE_SIZE:
+                raise RuntimeError(
+                    f"JD page {page_number} was truncated: "
+                    f"expected={COLLECTION_PAGE_SIZE}, got={len(rows)}"
+                )
+            collected_rows += len(rows)
             self.pages_fetched += 1
             self._save_payload(channel, page_number, payload)
             for raw in rows:
@@ -74,18 +86,25 @@ class JDConnector:
                     jobs_by_id[record.external_id] = record
                 else:
                     jobs_by_id[record.external_id] = _merge_locations(previous, record)
-
-            if page_number < total_pages:
-                payload = await self._next_page(page_number + 1)
-
-        if complete and not jobs_by_id:
-            raise RuntimeError("JD returned no jobs for a non-empty pagination range")
+        if complete:
+            if not jobs_by_id:
+                raise RuntimeError("JD returned no jobs for a non-empty pagination range")
+            observed_ui_pages = ceil(collected_rows / UI_PAGE_SIZE)
+            if observed_ui_pages != ui_total_pages:
+                raise RuntimeError(
+                    "JD pagination count changed during collection: "
+                    f"ui_pages={ui_total_pages}, rows={collected_rows}"
+                )
 
         return CollectionResult(
             channel=channel,
             jobs=list(jobs_by_id.values()),
             snapshots=self.snapshots,
-            partition_counts={"all": len(jobs_by_id)},
+            partition_counts={
+                "all": len(jobs_by_id),
+                "source-rows": collected_rows,
+                "ui-pages": ui_total_pages,
+            },
             pages_fetched=self.pages_fetched,
             complete=complete,
         )
@@ -99,19 +118,45 @@ class JDConnector:
             timeout=60_000,
         )
         payload = await self._next_payload("positions:1")
+        # Subsequent pages use the direct same-origin endpoint. Stop enqueueing
+        # those responses into the rendered-page queue to keep memory bounded.
+        self.page.remove_listener("response", self._record_response)
         return self._validate_rows(payload, 1)
 
-    async def _next_page(self, page_number: int) -> list[dict[str, Any]]:
+    async def _fetch_collection_page(self, page_number: int) -> Any:
         await self._rate_limit()
-        drain_json_responses(self._position_responses)
-        next_link = self.page.locator("a.next")
-        if await next_link.count() != 1:
-            raise RuntimeError("JD pagination has no unique next link")
-        if "disabled" in (await next_link.get_attribute("class") or ""):
-            raise RuntimeError(f"JD pagination ended before page {page_number}")
-        await next_link.click()
-        payload = await self._next_payload(f"positions:{page_number}")
-        return self._validate_rows(payload, page_number)
+        result = await self.page.evaluate(
+            """async ({url, pageIndex, pageSize}) => {
+                const body = new URLSearchParams({
+                    pageIndex: String(pageIndex),
+                    pageSize: String(pageSize),
+                    workCityJson: "[]",
+                    jobTypeJson: "[]",
+                    jobSearch: "",
+                    depTypeJson: "[]",
+                });
+                const response = await fetch(url, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+                        "X-Requested-With": "XMLHttpRequest",
+                    },
+                    body,
+                    credentials: "same-origin",
+                });
+                return {status: response.status, payload: await response.json()};
+            }""",
+            {
+                "url": POSITION_API_URL,
+                "pageIndex": page_number,
+                "pageSize": COLLECTION_PAGE_SIZE,
+            },
+        )
+        if not isinstance(result, dict) or result.get("status") != 200:
+            status = result.get("status") if isinstance(result, dict) else None
+            raise RuntimeError(f"JD page {page_number} returned HTTP {status}")
+        self._last_request_at = asyncio.get_running_loop().time()
+        return result.get("payload")
 
     async def _read_total_pages(self) -> int:
         next_link = self.page.locator("a.next")
@@ -128,14 +173,6 @@ class JDConnector:
         if total_pages < 1:
             raise RuntimeError(f"JD returned invalid page count: {total_pages}")
         return total_pages
-
-    async def _assert_active_page(self, expected: int) -> None:
-        active = self.page.locator("a.active, li.active")
-        if await active.count() == 0:
-            return
-        text = (await active.first.inner_text()).strip()
-        if text.isdigit() and int(text) != expected:
-            raise RuntimeError(f"JD page mismatch: expected={expected}, got={text}")
 
     async def _next_payload(self, operation: str) -> Any:
         payload = await next_json_response(

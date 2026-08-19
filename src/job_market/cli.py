@@ -9,6 +9,7 @@ from typing import Any
 
 from playwright.async_api import async_playwright
 
+from job_market.browser_network import BrowserNetworkMetrics
 from job_market.config import Settings
 from job_market.connectors.alibaba import AlibabaConnector
 from job_market.connectors.alibaba_international import AlibabaInternationalConnector
@@ -532,6 +533,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Fetch and validate without writing raw files or the database",
     )
+    crawl.add_argument(
+        "--due-only",
+        action="store_true",
+        help="Skip source channels that already have today's standard snapshot",
+    )
     dry_run_scope = crawl.add_mutually_exclusive_group()
     dry_run_scope.add_argument(
         "--max-pages",
@@ -558,6 +564,9 @@ async def crawl(args: argparse.Namespace, settings: Settings) -> int:
         raise ValueError("--full is only allowed together with --dry-run")
     if args.max_pages is not None and args.max_pages < 1:
         raise ValueError("--max-pages must be at least 1")
+    due_only = getattr(args, "due_only", False)
+    if due_only and args.dry_run:
+        raise ValueError("--due-only cannot be combined with --dry-run")
     timeout_seconds = (
         args.timeout_seconds
         if args.timeout_seconds is not None
@@ -600,6 +609,24 @@ async def crawl(args: argparse.Namespace, settings: Settings) -> int:
                 channel.value: note for channel, note in spec["channels"].items()
             },
         )
+        if due_only:
+            due_channels = repository.due_source_channels().get(spec["key"], set())
+            channels = [
+                channel for channel in channels if channel.value in due_channels
+            ]
+            if not channels:
+                print(
+                    json.dumps(
+                        {
+                            "source": args.source,
+                            "status": "skipped",
+                            "reason": "all_channels_already_collected_today",
+                        },
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    )
+                )
+                return 0
 
     failures: list[str] = []
     for channel in channels:
@@ -608,6 +635,7 @@ async def crawl(args: argparse.Namespace, settings: Settings) -> int:
         context = None
         browser = None
         playwright = None
+        network_metrics: BrowserNetworkMetrics | None = None
         try:
             if repository is not None and source_id is not None:
                 run_id = repository.start_run(source_id, channel.value)
@@ -624,8 +652,18 @@ async def crawl(args: argparse.Namespace, settings: Settings) -> int:
             playwright = await async_playwright().start()
             try:
                 browser = await playwright.chromium.launch(headless=settings.headless)
-                context = await browser.new_context(locale="zh-CN")
+                context = await browser.new_context(
+                    locale="zh-CN",
+                    service_workers=(
+                        "block" if settings.crawl_block_service_workers else "allow"
+                    ),
+                )
+                network_metrics = BrowserNetworkMetrics()
+                if settings.crawl_block_nonessential_resources:
+                    await network_metrics.install_policy(context)
                 page = await context.new_page()
+                await network_metrics.attach_page(page)
+                network_metrics.watch_new_pages(context)
                 connector = spec["connector"](page, settings, raw_store)
                 try:
                     async with asyncio.timeout(timeout_seconds):
@@ -648,6 +686,7 @@ async def crawl(args: argparse.Namespace, settings: Settings) -> int:
                     "absence_authoritative": result.absence_authoritative,
                     "dry_run": args.dry_run,
                     "timeout_seconds": timeout_seconds,
+                    "network": await network_metrics.snapshot(),
                 }
                 if result.complete:
                     summary["category_summary"] = category_summary(result)
@@ -678,16 +717,16 @@ async def crawl(args: argparse.Namespace, settings: Settings) -> int:
                     traceback.format_exc(),
                     [] if connector is None else connector.snapshots,
                 )
+            error_payload = {
+                "run_id": run_id,
+                "source": args.source,
+                "channel": channel.value,
+                "error": str(exc),
+            }
+            if network_metrics is not None:
+                error_payload["network"] = await network_metrics.snapshot()
             print(
-                json.dumps(
-                    {
-                        "run_id": run_id,
-                        "source": args.source,
-                        "channel": channel.value,
-                        "error": str(exc),
-                    },
-                    ensure_ascii=False,
-                ),
+                json.dumps(error_payload, ensure_ascii=False),
                 file=sys.stderr,
             )
 

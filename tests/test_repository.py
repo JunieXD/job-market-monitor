@@ -204,6 +204,24 @@ def test_due_sources_are_removed_after_all_channels_have_daily_snapshots() -> No
     assert repository.due_source_keys() == set()
 
 
+def test_due_source_channels_only_returns_missing_channels() -> None:
+    repository, _ = make_repository()
+    source_id = repository.ensure_source(
+        channels={"campus": None, "experienced": None}
+    )
+
+    assert repository.due_source_channels() == {
+        "bytedance_cn": {"campus", "experienced"}
+    }
+
+    run_id = repository.start_run(source_id, Channel.CAMPUS.value)
+    repository.ingest(run_id, result([make_job()]))
+
+    assert repository.due_source_channels() == {
+        "bytedance_cn": {"experienced"}
+    }
+
+
 def test_non_authoritative_run_stores_observations_without_advancing_absence() -> None:
     repository, clock = make_repository()
     source_id = repository.ensure_source()

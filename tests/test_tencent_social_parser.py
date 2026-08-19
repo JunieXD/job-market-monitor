@@ -64,12 +64,19 @@ def test_tencent_social_keeps_missing_category_unclassified() -> None:
 
 
 def test_tencent_social_validates_final_page_shape() -> None:
-    payload = {"Data": {"Count": 12, "Posts": [{"PostId": "x"}] * 2}}
+    payload = {"Data": {"Count": 102, "Posts": [{"PostId": "x"}] * 2}}
 
     page = TencentSocialConnector._position_page(payload, expected_page=2)
 
-    assert page["total"] == 12
+    assert page["total"] == 102
     assert len(page["rows"]) == 2
+
+
+def test_tencent_social_rejects_rows_from_the_wrong_page() -> None:
+    payload = {"Data": {"Count": 102, "Posts": [{"PostId": "x"}] * 100}}
+
+    with pytest.raises(RuntimeError, match="page 2 row mismatch"):
+        TencentSocialConnector._position_page(payload, expected_page=2)
 
 
 def test_tencent_social_rejects_invalid_update_date() -> None:

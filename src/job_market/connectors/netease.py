@@ -4,17 +4,12 @@ import asyncio
 import json
 import re
 from datetime import UTC, datetime
+from math import ceil
 from typing import Any
 
-from playwright.async_api import Page, Response
+from playwright.async_api import Page
 
 from job_market.config import Settings
-from job_market.connectors.browser_json import (
-    JsonResponseQueue,
-    drain_json_responses,
-    enqueue_json_response,
-    next_json_payload,
-)
 from job_market.raw_store import RawStore
 from job_market.schemas import (
     BusinessUnitRecord,
@@ -27,8 +22,10 @@ from job_market.schemas import (
     SourceCategoryRecord,
 )
 
-RESPONSE_TIMEOUT_SECONDS = 30
 POSITION_LIST_URL = "https://hr.163.com/job-list.html"
+POSITION_API_URL = "https://hr.163.com/api/hr163/position/queryPage"
+COLLECTION_PAGE_SIZE = 200
+MAX_COLLECTION_ATTEMPTS = 5
 WORK_TYPES = {"0": "全职", "1": "实习", "2": "派遣"}
 
 
@@ -44,8 +41,6 @@ class NetEaseConnector:
         self.snapshots: list[RawSnapshotRecord] = []
         self.pages_fetched = 0
         self._last_request_at = 0.0
-        self._position_responses: JsonResponseQueue = asyncio.Queue()
-        self.page.on("response", self._record_response)
 
     async def collect(
         self,
@@ -56,90 +51,141 @@ class NetEaseConnector:
         if channel is not Channel.GENERAL:
             raise ValueError("NetEase connector supports only the general channel")
 
-        payload = await self._open_first_page()
-        first = self._page_data(payload, 1)
-        total_pages = first["pages"]
-        total_count = first["total"]
-        jobs_by_id: dict[str, JobRecord] = {}
-        complete = True
-
-        for page_number in range(1, total_pages + 1):
-            if max_pages is not None and self.pages_fetched >= max_pages:
-                complete = False
-                break
-            current = self._page_data(payload, page_number)
-            self.pages_fetched += 1
-            self._save_payload(channel, page_number, payload)
-            for raw in current["rows"]:
-                record = self.parse_job(raw)
-                previous = jobs_by_id.get(record.external_id)
-                if previous is not None and previous.content_hash() != record.content_hash():
-                    raise RuntimeError(
-                        f"NetEase returned conflicting content for job {record.external_id}"
-                    )
-                jobs_by_id[record.external_id] = record
-            if page_number < total_pages:
-                payload = await self._next_page(page_number + 1)
-
-        if complete and len(jobs_by_id) != total_count:
-            raise RuntimeError(
-                "NetEase pagination count mismatch: "
-                f"declared={total_count}, unique={len(jobs_by_id)}"
-            )
+        initial_payload = await self._open_first_page()
+        initial_total = self._page_data(initial_payload, 1)["total"]
+        jobs_by_id, total_count, complete, observations = await self._collect_root(
+            channel,
+            initial_payload,
+            initial_total,
+            max_pages,
+        )
 
         return CollectionResult(
             channel=channel,
             jobs=list(jobs_by_id.values()),
             snapshots=self.snapshots,
-            partition_counts={"all": total_count},
+            partition_counts={
+                "all": total_count,
+                "collected-unique": len(jobs_by_id),
+                **{
+                    f"root-observation-{index:02d}": total
+                    for index, total in enumerate(observations, start=1)
+                },
+            },
             pages_fetched=self.pages_fetched,
             complete=complete,
         )
 
     async def _open_first_page(self) -> dict[str, Any]:
-        await self._rate_limit()
-        drain_json_responses(self._position_responses)
         await self.page.goto(
             POSITION_LIST_URL,
             wait_until="domcontentloaded",
             timeout=60_000,
         )
-        return await self._next_payload("positions:1")
+        return await self._fetch_page(1)
 
-    async def _next_page(self, page_number: int) -> dict[str, Any]:
+    async def _fetch_page(self, page_number: int) -> dict[str, Any]:
         await self._rate_limit()
-        drain_json_responses(self._position_responses)
-        next_button = self.page.locator("li.ant-pagination-next")
-        if await next_button.count() != 1:
-            raise RuntimeError("NetEase pagination has no unique next button")
-        if await next_button.get_attribute("aria-disabled") == "true":
-            raise RuntimeError(f"NetEase pagination ended before page {page_number}")
-        await next_button.click()
-        payload = await self._next_payload(f"positions:{page_number}")
-        await self._assert_active_page(page_number)
-        return payload
-
-    async def _assert_active_page(self, expected: int) -> None:
-        active = self.page.locator("li.ant-pagination-item-active")
-        if await active.count() != 1:
-            raise RuntimeError("NetEase pagination has no unique active page")
-        title = await active.get_attribute("title")
-        if title != str(expected):
-            raise RuntimeError(
-                f"NetEase page mismatch: expected={expected}, got={title!r}"
-            )
-
-    async def _next_payload(self, operation: str) -> dict[str, Any]:
-        payload = await next_json_payload(
-            self._position_responses,
-            timeout_seconds=RESPONSE_TIMEOUT_SECONDS,
-            operation=f"NetEase response: {operation}",
+        result = await self.page.evaluate(
+            """async ({url, currentPage, pageSize}) => {
+                const response = await fetch(url, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "language": "zh",
+                        "authtype": "ursAuth",
+                    },
+                    body: JSON.stringify({currentPage, pageSize}),
+                    credentials: "same-origin",
+                });
+                return {status: response.status, payload: await response.json()};
+            }""",
+            {
+                "url": POSITION_API_URL,
+                "currentPage": page_number,
+                "pageSize": COLLECTION_PAGE_SIZE,
+            },
         )
+        if not isinstance(result, dict) or result.get("status") != 200:
+            status = result.get("status") if isinstance(result, dict) else None
+            raise RuntimeError(f"NetEase page {page_number} returned HTTP {status}")
+        payload = result.get("payload")
+        if not isinstance(payload, dict):
+            raise RuntimeError(f"NetEase page {page_number} returned invalid JSON")
         if payload.get("code") != 200 or not isinstance(payload.get("data"), dict):
             message = json.dumps(payload, ensure_ascii=False)[:1000]
-            raise RuntimeError(f"Invalid NetEase response for {operation}: {message}")
+            raise RuntimeError(
+                f"Invalid NetEase response for page {page_number}: {message}"
+            )
         self._last_request_at = asyncio.get_running_loop().time()
         return payload
+
+    async def _collect_root(
+        self,
+        channel: Channel,
+        initial_payload: dict[str, Any],
+        initial_total: int,
+        max_pages: int | None,
+    ) -> tuple[dict[str, JobRecord], int, bool, list[int]]:
+        union_by_id: dict[str, JobRecord] = {}
+        target_total = initial_total
+        observations: list[int] = []
+
+        for attempt in range(1, MAX_COLLECTION_ATTEMPTS + 1):
+            payload = initial_payload if attempt == 1 else await self._fetch_page(1)
+            first = self._page_data(payload, 1)
+            observations.append(first["total"])
+            if first["total"] != target_total:
+                target_total = first["total"]
+                union_by_id = {}
+
+            pass_by_id: dict[str, JobRecord] = {}
+            total_pages = first["pages"]
+            partition = "root" if attempt == 1 else f"root-retry-{attempt}"
+            for page_number in range(1, total_pages + 1):
+                if max_pages is not None and self.pages_fetched >= max_pages:
+                    return union_by_id or pass_by_id, target_total, False, observations
+                current = self._page_data(payload, page_number)
+                if current["total"] != target_total or current["pages"] != total_pages:
+                    break
+                self.pages_fetched += 1
+                self._save_payload(channel, partition, page_number, payload)
+                for raw in current["rows"]:
+                    record = self.parse_job(raw)
+                    previous = pass_by_id.get(record.external_id)
+                    if previous is not None and (
+                        previous.content_hash() != record.content_hash()
+                    ):
+                        raise RuntimeError(
+                            "NetEase returned conflicting content for job "
+                            f"{record.external_id}"
+                        )
+                    pass_by_id[record.external_id] = record
+                if page_number < total_pages:
+                    payload = await self._fetch_page(page_number + 1)
+            else:
+                for external_id, record in pass_by_id.items():
+                    previous = union_by_id.get(external_id)
+                    if previous is not None and (
+                        previous.content_hash() != record.content_hash()
+                    ):
+                        raise RuntimeError(
+                            f"NetEase job {external_id} changed during retries"
+                        )
+                    union_by_id[external_id] = record
+                if len(union_by_id) == target_total:
+                    return union_by_id, target_total, True, observations
+                if len(union_by_id) > target_total:
+                    raise RuntimeError(
+                        "NetEase observations exceeded the declared total: "
+                        f"declared={target_total}, unique={len(union_by_id)}"
+                    )
+
+        raise RuntimeError(
+            "NetEase root did not converge after "
+            f"{MAX_COLLECTION_ATTEMPTS} attempts: declared={target_total}, "
+            f"union={len(union_by_id)}"
+        )
 
     @staticmethod
     def _page_data(payload: dict[str, Any], expected_page: int) -> dict[str, Any]:
@@ -155,16 +201,27 @@ class NetEaseConnector:
             raise RuntimeError(f"NetEase returned invalid pages: {pages!r}")
         if not isinstance(total, int) or total < 0:
             raise RuntimeError(f"NetEase returned invalid total: {total!r}")
+        expected_pages = ceil(total / COLLECTION_PAGE_SIZE) if total else 0
+        if pages != expected_pages:
+            raise RuntimeError(
+                "NetEase pagination metadata mismatch: "
+                f"pages={pages}, total={total}, size={COLLECTION_PAGE_SIZE}"
+            )
+        expected_rows = min(
+            COLLECTION_PAGE_SIZE,
+            max(total - (expected_page - 1) * COLLECTION_PAGE_SIZE, 0),
+        )
+        if len(rows) != expected_rows:
+            raise RuntimeError(
+                f"NetEase page {expected_page} row mismatch: "
+                f"expected={expected_rows}, got={len(rows)}"
+            )
         if total and not rows:
             raise RuntimeError(f"NetEase returned an empty non-terminal page {expected_page}")
         for row in rows:
             if not isinstance(row, dict):
                 raise RuntimeError(f"NetEase page {expected_page} contains a non-object row")
         return {"rows": rows, "pages": pages, "total": total}
-
-    def _record_response(self, response: Response) -> None:
-        if response.status == 200 and "/api/hr163/position/queryPage" in response.url:
-            enqueue_json_response(self._position_responses, response)
 
     async def _rate_limit(self) -> None:
         delay = self.settings.netease_request_delay_seconds - (
@@ -173,12 +230,18 @@ class NetEaseConnector:
         if delay > 0:
             await asyncio.sleep(delay)
 
-    def _save_payload(self, channel: Channel, page_number: int, payload: dict[str, Any]) -> None:
+    def _save_payload(
+        self,
+        channel: Channel,
+        partition: str,
+        page_number: int,
+        payload: dict[str, Any],
+    ) -> None:
         if self.raw_store is not None:
             self.snapshots.append(
                 self.raw_store.save(
                     channel=channel,
-                    partition="all",
+                    partition=partition,
                     offset=page_number - 1,
                     payload=payload,
                 )

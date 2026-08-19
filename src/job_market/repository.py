@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
@@ -43,6 +43,7 @@ from job_market.schemas import (
 )
 
 AUTO_LOCATION_MAPPING_METHODS = {"exact_source_fields", "normalized_city_name"}
+INGEST_ADVISORY_LOCK_KEY = 1_905_202_026
 
 
 def _utc_now() -> datetime:
@@ -83,6 +84,7 @@ class Repository:
             channels = {"campus": None, "experienced": None}
         now = self._now()
         with Session(self.engine) as session, session.begin():
+            self._lock_ingest_transaction(session)
             company = session.scalar(select(Company).where(Company.key == company_key))
             if company is None:
                 company = Company(key=company_key, name=company_name, created_at=now)
@@ -211,6 +213,7 @@ class Repository:
         reopened_count = 0
 
         with Session(self.engine) as session, session.begin():
+            self._lock_ingest_transaction(session)
             run = session.get(CrawlRun, run_id)
             if run is None:
                 raise ValueError(f"Unknown crawl run: {run_id}")
@@ -453,17 +456,27 @@ class Repository:
             run.complete = result.complete
             run.absence_authoritative = result.absence_authoritative
 
-        return {
-            "discovered": len(result.jobs),
-            "new": new_count,
-            "changed": changed_count,
-            "enriched": enriched_count,
-            "reopened": reopened_count,
-            "closed": closed_count,
-            "canonical": daily_snapshot,
-            "lifecycle_advanced": advances_lifecycle,
-            "absence_authoritative": result.absence_authoritative,
-        }
+            return {
+                "discovered": len(result.jobs),
+                "new": new_count,
+                "changed": changed_count,
+                "enriched": enriched_count,
+                "reopened": reopened_count,
+                "closed": closed_count,
+                "canonical": daily_snapshot,
+                "lifecycle_advanced": advances_lifecycle,
+                "absence_authoritative": result.absence_authoritative,
+            }
+
+    def _lock_ingest_transaction(self, session: Session) -> None:
+        if self.engine.dialect.name != "postgresql":
+            return
+        # Network collection remains concurrent. Shared company/source metadata,
+        # dimensions, and lifecycle writes are short and serialized.
+        session.execute(
+            text("SELECT pg_advisory_xact_lock(:lock_key)"),
+            {"lock_key": INGEST_ADVISORY_LOCK_KEY},
+        )
 
     def fail_run(
         self,
@@ -523,8 +536,13 @@ class Repository:
     def due_source_keys(self) -> set[str]:
         """Return enabled sources missing at least one standard snapshot today."""
 
+        return set(self.due_source_channels())
+
+    def due_source_channels(self) -> dict[str, set[str]]:
+        """Return the active channels still missing a standard snapshot today."""
+
         now = self._now()
-        due: set[str] = set()
+        due: dict[str, set[str]] = {}
         with Session(self.engine) as session:
             sources = session.scalars(
                 select(Source).where(Source.enabled.is_(True)).order_by(Source.key)
@@ -547,8 +565,9 @@ class Repository:
                         )
                     )
                 )
-                if active_channels - completed_channels:
-                    due.add(source.key)
+                missing_channels = active_channels - completed_channels
+                if missing_channels:
+                    due[source.key] = missing_channels
         return due
 
     @staticmethod

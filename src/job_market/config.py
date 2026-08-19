@@ -50,4 +50,6 @@ class Settings(BaseSettings):
     daily_crawl_hour: int = Field(default=3, ge=0, le=23)
     daily_crawl_minute: int = Field(default=15, ge=0, le=59)
     daily_crawl_timezone: str = "Asia/Shanghai"
+    crawl_block_nonessential_resources: bool = True
+    crawl_block_service_workers: bool = True
     headless: bool = True

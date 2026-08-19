@@ -3,21 +3,16 @@
 import asyncio
 import json
 import re
+import time
 from datetime import datetime
 from math import ceil
 from typing import Any
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import urlencode
 from zoneinfo import ZoneInfo
 
-from playwright.async_api import Page, Response, Route
+from playwright.async_api import Page
 
 from job_market.config import Settings
-from job_market.connectors.browser_json import (
-    JsonResponseQueue,
-    drain_json_responses,
-    enqueue_json_response,
-    next_json_payload,
-)
 from job_market.raw_store import RawStore
 from job_market.schemas import (
     BusinessUnitRecord,
@@ -31,15 +26,14 @@ from job_market.schemas import (
 )
 
 RESPONSE_TIMEOUT_SECONDS = 30
-UI_PAGE_SIZE = 10
+UI_PAGE_SIZE = 100
 MAX_COLLECTION_ATTEMPTS = 5
-POSITION_LIST_URL = "https://careers.tencent.com/search.html"
 POSITION_DETAIL_URL = "https://careers.tencent.com/jobdesc.html?postId={external_id}"
-POSITION_ENDPOINT = "/tencentcareer/api/post/Query"
+POSITION_API_URL = "https://careers.tencent.com/tencentcareer/api/post/Query"
 
 
 class TencentSocialConnector:
-    """Collect the official social root list through rendered pagination."""
+    """Collect the official social root list through its public JSON endpoint."""
 
     source_key = "tencent_social_cn"
 
@@ -50,10 +44,7 @@ class TencentSocialConnector:
         self.snapshots: list[RawSnapshotRecord] = []
         self.pages_fetched = 0
         self._last_request_at = 0.0
-        self._position_responses: JsonResponseQueue = asyncio.Queue()
-        self._active_page = 1
         self._root_observations: list[int] = []
-        self.page.on("response", self._record_response)
 
     async def collect(
         self,
@@ -64,7 +55,6 @@ class TencentSocialConnector:
         if channel is not Channel.EXPERIENCED:
             raise ValueError("Tencent social connector supports only experienced jobs")
 
-        await self.page.route("**/*", _skip_nonessential_assets)
         root_payload = await self._observe_social_root(channel)
         initial_total = self._position_page(root_payload, expected_page=1)["total"]
         jobs_by_id, declared_total, complete = await self._collect_root(
@@ -125,7 +115,6 @@ class TencentSocialConnector:
             for page_number in range(1, total_pages + 1):
                 if max_pages is not None and self.pages_fetched >= max_pages:
                     return union_by_id or pass_by_id, target_total, False
-                await self._assert_active_page(page_number)
                 current = self._position_page(payload, expected_page=page_number)
                 if current["total"] != target_total:
                     break
@@ -180,90 +169,45 @@ class TencentSocialConnector:
         return payload
 
     async def _open_social_root(self) -> dict[str, Any]:
-        self._active_page = 1
-        drain_json_responses(self._position_responses)
-        await self.page.goto(
-            POSITION_LIST_URL,
-            wait_until="domcontentloaded",
-            timeout=60_000,
-        )
-        await self._expand_filter("招聘类型")
-        social = await self._unique_exact(".checkbox-content .item-li", "社招")
-        await self._rate_limit()
-        drain_json_responses(self._position_responses)
-        await social.click()
-        payload = await self._next_payload("positions:social:1")
-        await self._assert_active_page(1)
-        return payload
-
-    async def _expand_filter(self, name: str) -> None:
-        containers = self.page.locator(".option-item")
-        matching = []
-        for index in range(await containers.count()):
-            item = containers.nth(index)
-            heading = item.locator(".item-link")
-            if await heading.count() == 1 and (await heading.inner_text()).strip() == name:
-                matching.append(item)
-        if len(matching) != 1:
-            raise RuntimeError(f"Tencent social filter {name!r} is not unique")
-        menu = matching[0].locator(".item-ul")
-        if await menu.count() != 1:
-            raise RuntimeError(f"Tencent social filter {name!r} has no menu")
-        if not await menu.is_visible():
-            await matching[0].locator(".item-link").click()
-            await menu.wait_for(state="visible", timeout=10_000)
-
-    async def _unique_exact(self, selector: str, text: str):
-        locator = self.page.locator(selector, has_text=text)
-        matching = []
-        for index in range(await locator.count()):
-            item = locator.nth(index)
-            if (await item.inner_text()).strip() == text:
-                matching.append(item)
-        if len(matching) != 1:
-            raise RuntimeError(f"Tencent social option {text!r} is not unique")
-        return matching[0]
+        return await self._fetch_page(1)
 
     async def _next_page(self, page_number: int) -> dict[str, Any]:
+        return await self._fetch_page(page_number)
+
+    async def _fetch_page(self, page_number: int) -> dict[str, Any]:
         await self._rate_limit()
-        drain_json_responses(self._position_responses)
-        self._active_page = page_number
-        next_button = self.page.locator(".page-list .next")
-        if await next_button.count() != 1:
-            raise RuntimeError("Tencent social pagination has no unique next button")
-        classes = await next_button.get_attribute("class") or ""
-        if "disabled" in classes:
+        query = urlencode(
+            {
+                "timestamp": str(round(time.time() * 1000)),
+                "countryId": "",
+                "cityId": "",
+                "bgIds": "",
+                "productId": "",
+                "categoryId": "",
+                "parentCategoryId": "",
+                "attrId": "1",
+                "keyword": "",
+                "pageIndex": str(page_number),
+                "pageSize": str(UI_PAGE_SIZE),
+                "language": "zh-cn",
+                "area": "cn",
+            }
+        )
+        response = await self.page.goto(
+            f"{POSITION_API_URL}?{query}",
+            wait_until="commit",
+            timeout=60_000,
+        )
+        if response is None or response.status != 200:
+            status = None if response is None else response.status
             raise RuntimeError(
-                f"Tencent social pagination ended before page {page_number}"
+                f"Tencent social page {page_number} returned HTTP {status}"
             )
-        await next_button.click()
-        payload = await self._next_payload(f"positions:{page_number}")
-        await self._assert_active_page(page_number)
-        return payload
-
-    async def _assert_active_page(self, expected_page: int) -> None:
-        active = self.page.locator(".page-list .page-li.active .page-text")
-        deadline = asyncio.get_running_loop().time() + RESPONSE_TIMEOUT_SECONDS
-        while asyncio.get_running_loop().time() < deadline:
-            if await active.count() == 1:
-                text = (await active.inner_text()).strip()
-                if text == str(expected_page):
-                    return
-            await asyncio.sleep(0.05)
-        raise RuntimeError(
-            f"Tencent social page did not render active page {expected_page}"
-        )
-
-    async def _next_payload(self, operation: str) -> dict[str, Any]:
-        payload = await next_json_payload(
-            self._position_responses,
-            timeout_seconds=RESPONSE_TIMEOUT_SECONDS,
-            operation=f"Tencent social response: {operation}",
-        )
+        payload = await response.json()
         if payload.get("Code") != 200 or not isinstance(payload.get("Data"), dict):
             message = json.dumps(payload, ensure_ascii=False)[:1000]
             raise RuntimeError(
-                f"Invalid Tencent social response for {operation}: {message}"
+                f"Invalid Tencent social response for page {page_number}: {message}"
             )
         self._last_request_at = asyncio.get_running_loop().time()
         return payload
@@ -364,32 +308,6 @@ class TencentSocialConnector:
             source_payload=raw,
         )
 
-    def _record_response(self, response: Response) -> None:
-        if response.status != 200 or POSITION_ENDPOINT not in response.url:
-            return
-        params = parse_qs(urlparse(response.url).query, keep_blank_values=True)
-        if (
-            _single_query_value(params, "attrId") != "1"
-            or _single_query_value(params, "pageIndex") != str(self._active_page)
-            or _single_query_value(params, "pageSize") != str(UI_PAGE_SIZE)
-            or _single_query_value(params, "language") != "zh-cn"
-            or _single_query_value(params, "area") != "cn"
-        ):
-            return
-        for key in (
-            "countryId",
-            "cityId",
-            "bgIds",
-            "productId",
-            "parentCategoryId",
-            "keyword",
-        ):
-            if _single_query_value(params, key) != "":
-                return
-        if _single_query_value(params, "categoryId") != "":
-            return
-        enqueue_json_response(self._position_responses, response)
-
     async def _rate_limit(self) -> None:
         delay = self.settings.tencent_request_delay_seconds - (
             asyncio.get_running_loop().time() - self._last_request_at
@@ -415,13 +333,6 @@ class TencentSocialConnector:
             )
 
 
-async def _skip_nonessential_assets(route: Route) -> None:
-    if route.request.resource_type in {"image", "media", "font"}:
-        await route.abort()
-    else:
-        await route.continue_()
-
-
 def _optional(value: Any) -> str | None:
     if value is None:
         return None
@@ -443,13 +354,6 @@ def _response_int(value: Any, field: str, *, allow_zero: bool = False) -> int:
     if value < minimum:
         raise RuntimeError(f"Tencent social {field} is invalid: {value!r}")
     return value
-
-
-def _single_query_value(params: dict[str, list[str]], key: str) -> str | None:
-    values = params.get(key)
-    if values is None or len(values) != 1:
-        return None
-    return values[0]
 
 
 def _source_datetime(value: Any) -> datetime | None:

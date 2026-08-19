@@ -9,7 +9,8 @@ WorkingDirectory=/opt/job-market-monitor
 Environment=SOURCE_TIMEOUT_SECONDS=10800
 Environment=MAX_ATTEMPTS=2
 Environment=RETRY_DELAY_SECONDS=60
-Environment=INTER_SOURCE_DELAY_SECONDS=10
+Environment=MAX_PARALLEL_SOURCES=2
+Environment=SOURCE_START_DELAY_SECONDS=3
 ExecStart=/opt/job-market-monitor/deploy/run-scheduled-crawls.sh
 TimeoutStartSec=23h
 TimeoutStopSec=2m

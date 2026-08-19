@@ -32,6 +32,7 @@ if [[ "${1:-}" == "rm" && "${2:-}" == "-f" ]]; then
 fi
 command_name=""
 source_name=""
+due_only=false
 for ((i=1; i<=$#; i++)); do
   value=${!i}
   if [[ "$value" == "collector" ]]; then
@@ -42,13 +43,25 @@ for ((i=1; i<=$#; i++)); do
     next=$((i + 1))
     source_name=${!next}
   fi
+  if [[ "$value" == "--due-only" ]]; then
+    due_only=true
+  fi
 done
 case "$command_name" in
   list-sources)
-    printf 'alpha\\nbeta\\n'
+    printf '%b' "$FAKE_SOURCES"
     ;;
   crawl)
-    printf '%s\\n' "$source_name" >> "$FAKE_LOG"
+    if [[ "$due_only" != true ]]; then
+      exit 98
+    fi
+    if [[ "$TRACE_CONCURRENCY" == "true" ]]; then
+      printf 'start:%s\\n' "$source_name" >> "$FAKE_LOG"
+      sleep "$CRAWL_SLEEP_SECONDS"
+      printf 'end:%s\\n' "$source_name" >> "$FAKE_LOG"
+    else
+      printf '%s\\n' "$source_name" >> "$FAKE_LOG"
+    fi
     if [[ "$source_name" == "alpha" && "$FAIL_MODE" == "always" ]]; then
       exit 1
     fi
@@ -100,6 +113,9 @@ def _run_scheduler(
     fail_mode: str,
     attempts: int,
     timeout_source: str = "",
+    max_parallel: int = 1,
+    fake_sources: str = "alpha\nbeta\n",
+    trace_concurrency: bool = False,
 ):
     docker, timeout, flock = _fake_tools(tmp_path)
     compose_file = tmp_path / "compose.production.yaml"
@@ -117,9 +133,13 @@ def _run_scheduler(
         "FAKE_CONTAINER_STATE": str(tmp_path / "container-state"),
         "FAIL_MODE": fail_mode,
         "TIMEOUT_SOURCE": timeout_source,
+        "FAKE_SOURCES": fake_sources,
+        "TRACE_CONCURRENCY": str(trace_concurrency).lower(),
+        "CRAWL_SLEEP_SECONDS": "0.2",
         "MAX_ATTEMPTS": str(attempts),
+        "MAX_PARALLEL_SOURCES": str(max_parallel),
         "RETRY_DELAY_SECONDS": "0",
-        "INTER_SOURCE_DELAY_SECONDS": "0",
+        "SOURCE_START_DELAY_SECONDS": "0",
     }
     result = subprocess.run(
         ["bash", str(SCHEDULER)],
@@ -128,7 +148,8 @@ def _run_scheduler(
         capture_output=True,
         check=False,
     )
-    calls = (tmp_path / "calls.log").read_text(encoding="utf-8").splitlines()
+    log_path = tmp_path / "calls.log"
+    calls = log_path.read_text(encoding="utf-8").splitlines() if log_path.exists() else []
     return result, calls
 
 
@@ -163,3 +184,59 @@ def test_scheduler_removes_timed_out_container_then_continues(tmp_path) -> None:
         "beta",
     ]
     assert "source:alpha" in result.stdout
+
+
+def test_scheduler_runs_sources_up_to_configured_parallelism(tmp_path) -> None:
+    result, calls = _run_scheduler(
+        tmp_path,
+        fail_mode="never",
+        attempts=1,
+        max_parallel=2,
+        fake_sources="alpha\nbeta\ngamma\n",
+        trace_concurrency=True,
+    )
+
+    active: set[str] = set()
+    peak = 0
+    for call in calls:
+        event, source = call.split(":", maxsplit=1)
+        if event == "start":
+            active.add(source)
+            peak = max(peak, len(active))
+        else:
+            active.remove(source)
+
+    assert result.returncode == 0
+    assert peak == 2
+    assert active == set()
+
+
+def test_scheduler_failure_isolated_when_sources_run_in_parallel(tmp_path) -> None:
+    result, calls = _run_scheduler(
+        tmp_path,
+        fail_mode="always",
+        attempts=1,
+        max_parallel=2,
+        fake_sources="alpha\nbeta\ngamma\n",
+    )
+
+    assert result.returncode == 1
+    assert {call for call in calls if not call.startswith("recover:")} == {
+        "alpha",
+        "beta",
+        "gamma",
+    }
+    assert "source:alpha" in result.stdout
+
+
+def test_scheduler_rejects_invalid_parallelism(tmp_path) -> None:
+    result, calls = _run_scheduler(
+        tmp_path,
+        fail_mode="never",
+        attempts=1,
+        max_parallel=0,
+    )
+
+    assert result.returncode == 1
+    assert calls == []
+    assert "max_parallel_sources_must_be_a_positive_integer" in result.stdout
