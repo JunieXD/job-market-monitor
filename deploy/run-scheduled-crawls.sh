@@ -163,18 +163,24 @@ if ! "${compose[@]}" config --quiet; then
   log_event "batch_preflight_failed" "compose_config_invalid"
   exit 1
 fi
-if ! run_container check-schema; then
-  log_event "batch_preflight_failed" "database_schema_invalid"
+preflight_output=$(run_container check-schema 2>&1)
+if [[ $? -ne 0 ]]; then
+  log_event "batch_preflight_failed" "database_schema_invalid:${preflight_output:0:2000}"
   exit 1
 fi
-if ! run_container check-runtime; then
-  log_event "batch_preflight_failed" "runtime_storage_invalid"
+log_event "preflight_check_succeeded" "check-schema"
+preflight_output=$(run_container check-runtime 2>&1)
+if [[ $? -ne 0 ]]; then
+  log_event "batch_preflight_failed" "runtime_storage_invalid:${preflight_output:0:2000}"
   exit 1
 fi
-if ! run_container recover-runs; then
-  log_event "batch_preflight_failed" "abandoned_run_recovery_failed"
+log_event "preflight_check_succeeded" "check-runtime"
+preflight_output=$(run_container recover-runs 2>&1)
+if [[ $? -ne 0 ]]; then
+  log_event "batch_preflight_failed" "abandoned_run_recovery_failed:${preflight_output:0:2000}"
   exit 1
 fi
+log_event "run_recovery_succeeded" "${preflight_output:0:2000}"
 
 source_output=$(run_container list-sources --format lines --due-only)
 if [[ $? -ne 0 ]]; then
@@ -221,6 +227,7 @@ run_source_worker() {
   local container_name="${CRAWL_CONTAINER_PREFIX}-${source}"
   local exit_code
   local final_exit_code=1
+  local recovery_output
 
   while (( attempt <= MAX_ATTEMPTS )); do
     log_event "source_started" "${source}:attempt-${attempt}"
@@ -245,10 +252,15 @@ run_source_worker() {
     if ! cleanup_source_container "$container_name"; then
       log_event "source_recovery_warning" "${source}:container_cleanup_failed"
     fi
-    if ! run_container recover-runs \
+    recovery_output=$(run_container recover-runs \
       --source "$source" \
-      --older-than-minutes 0; then
-      log_event "source_recovery_warning" "${source}:run_recovery_failed"
+      --older-than-minutes 0 2>&1)
+    if [[ $? -ne 0 ]]; then
+      log_event \
+        "source_recovery_warning" \
+        "${source}:run_recovery_failed:${recovery_output:0:2000}"
+    else
+      log_event "source_recovery_succeeded" "${source}:${recovery_output:0:2000}"
     fi
     if (( attempt < MAX_ATTEMPTS && RETRY_DELAY_SECONDS > 0 )); then
       sleep "$RETRY_DELAY_SECONDS"

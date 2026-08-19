@@ -293,8 +293,8 @@ def test_scheduler_writes_bounded_file_log(tmp_path, monkeypatch) -> None:
 
     assert result.returncode == 0
     events = [json.loads(line) for line in log_file.read_text().splitlines()]
-    assert events[0]["event"] == "batch_started"
-    assert events[0]["batch_id"] == events[-1]["batch_id"]
+    assert any(event["event"] == "batch_started" for event in events)
+    assert {event["batch_id"] for event in events} == {events[-1]["batch_id"]}
     assert events[-1]["event"] == "batch_finished"
 
 
