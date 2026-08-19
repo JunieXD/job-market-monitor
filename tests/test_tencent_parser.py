@@ -91,6 +91,32 @@ def test_tencent_active_detail_is_validated_and_parsed() -> None:
     assert parsed_ids == [raw["postId"]]
 
 
+def test_tencent_project_internship_uses_official_id_when_post_id_is_null() -> None:
+    raw = {
+        "postId": None,
+        "id": -2,
+        "title": "项目实习生-技术",
+        "desc": "项目制技术工作支持",
+        "request": "具备编程能力",
+        "recruitType": 2,
+        "recruitLabelName": "日常实习",
+        "projectId": 12,
+        "projectName": "项目实习生",
+        "tid": 2,
+        "tidName": "技术",
+    }
+
+    record = _connector_without_browser()._parse_detail_response(
+        {"message": "", "status": 0, "data": raw},
+        "-2",
+    )
+
+    assert record is not None
+    assert record.external_id == "-2"
+    assert record.external_code == "-2"
+    assert record.title == "项目实习生-技术"
+
+
 def test_tencent_unknown_detail_error_remains_a_failure() -> None:
     with pytest.raises(RuntimeError, match="Invalid Tencent detail"):
         _connector_without_browser()._parse_detail_response(

@@ -399,7 +399,11 @@ class TencentConnector:
 
     @staticmethod
     def parse_job(raw: dict[str, Any]) -> JobRecord:
-        external_id = _required(raw, "postId", "Tencent job id")
+        external_id = _optional(raw.get("postId")) or _required(
+            raw,
+            "id",
+            "Tencent job id",
+        )
         title = _required(raw, "title", f"Tencent job title ({external_id})")
         description = _optional(raw.get("desc"))
         requirements = _optional(raw.get("request"))
