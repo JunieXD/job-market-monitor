@@ -123,11 +123,13 @@ export type CollectionStatus = {
 
 export async function getJson<T>(
   path: string,
-  params?: Record<string, string | number | null | undefined>,
+  params?: Record<string, string | number | string[] | null | undefined>,
 ): Promise<T> {
   const search = new URLSearchParams();
   Object.entries(params ?? {}).forEach(([key, value]) => {
-    if (value !== undefined && value !== null && value !== "") {
+    if (Array.isArray(value)) {
+      value.forEach((item) => search.append(key, item));
+    } else if (value !== undefined && value !== null && value !== "") {
       search.set(key, String(value));
     }
   });

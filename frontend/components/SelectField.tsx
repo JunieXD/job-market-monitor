@@ -11,18 +11,22 @@ export function SelectField({
   options,
   onValueChange,
   ariaLabel,
+  className = "",
+  triggerClassName = "",
 }: {
   label?: string;
   value: string;
   options: SelectOption[];
   onValueChange: (value: string) => void;
   ariaLabel: string;
+  className?: string;
+  triggerClassName?: string;
 }) {
   return (
-    <label className="field">
+    <div className={`field ${className}`}>
       {label && <span className="field-label">{label}</span>}
       <Select.Root value={value} onValueChange={onValueChange}>
-        <Select.Trigger className="select-trigger" aria-label={ariaLabel}>
+        <Select.Trigger className={`select-trigger ${triggerClassName}`} aria-label={ariaLabel}>
           <Select.Value />
           <Select.Icon className="select-icon"><ChevronDown size={15} /></Select.Icon>
         </Select.Trigger>
@@ -39,6 +43,6 @@ export function SelectField({
           </Select.Content>
         </Select.Portal>
       </Select.Root>
-    </label>
+    </div>
   );
 }

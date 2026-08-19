@@ -75,7 +75,7 @@ export function OverviewPage() {
 
 function CompanyCoverageTable({ rows }: { rows: CompanyRow[] }) {
   return (
-    <TableWrap><table className="compact-table"><thead><tr><th>公司</th><th>招聘类型</th><th className="numeric">岗位</th></tr></thead><tbody>
+    <TableWrap><table className="compact-table fit-table"><thead><tr><th>公司</th><th>招聘类型</th><th className="numeric">岗位</th></tr></thead><tbody>
       {rows.map((row) => <tr key={`${row.source_id}-${row.channel}`}><td><span className="company-name"><Building2 size={14} />{row.company_name}</span></td><td><ChannelTag channel={row.channel} /></td><td className="numeric">{formatNumber(row.active_posting_count)}</td></tr>)}
     </tbody></table></TableWrap>
   );

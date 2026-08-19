@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from datetime import date, datetime, time, timedelta
-from typing import Any
+from typing import Annotated, Any, Literal
 from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -319,11 +319,14 @@ def create_app(
     def jobs(
         request: Request,
         company_key: str | None = None,
+        company_keys: Annotated[list[str] | None, Query()] = None,
         source_key: str | None = None,
         channel: str | None = None,
+        channels: Annotated[list[str] | None, Query()] = None,
         snapshot_date: date | None = None,
         status: str = "active",
-        query: str | None = None,
+        query: str | None = Query(default=None, max_length=100),
+        query_field: Literal["all", "title", "description", "requirements"] = "all",
         limit: int = Query(default=50, ge=1, le=100),
         offset: int = Query(default=0, ge=0, le=100000),
     ) -> AnalyticsEnvelope:
@@ -337,18 +340,33 @@ def create_app(
             "limit": limit,
             "offset": offset,
         }
-        if company_key is not None:
-            filters.append("c.key = :company_key")
-            params["company_key"] = company_key
+        selected_companies = _unique_values([company_key, *(company_keys or [])])
+        if selected_companies:
+            placeholders = _bind_list(params, "company_key", selected_companies)
+            filters.append(f"c.key IN ({placeholders})")
         if source_key is not None:
             filters.append("s.key = :source_key")
             params["source_key"] = source_key
-        if channel is not None:
-            filters.append("j.channel = :channel")
-            params["channel"] = channel
+        selected_channels = _unique_values([channel, *(channels or [])])
+        if selected_channels:
+            placeholders = _bind_list(params, "channel", selected_channels)
+            filters.append(f"j.channel IN ({placeholders})")
         if query is not None and query.strip():
-            filters.append("(j.title LIKE :query OR j.description LIKE :query)")
-            params["query"] = f"%{query.strip()}%"
+            search_columns = {
+                "title": ["j.title"],
+                "description": ["j.description"],
+                "requirements": ["j.requirements"],
+                "all": ["j.title", "j.description", "j.requirements"],
+            }[query_field]
+            filters.append(
+                "("
+                + " OR ".join(
+                    f"LOWER(COALESCE({column}, '')) LIKE :query ESCAPE '\\'"
+                    for column in search_columns
+                )
+                + ")"
+            )
+            params["query"] = _fuzzy_like_pattern(query)
         where = " AND ".join(filters)
         engine = request.app.state.engine
         rows = _query_rows(
@@ -386,12 +404,13 @@ def create_app(
             rows,
             coverage=coverage,
             filters={
-                "company_key": company_key,
+                "company_keys": selected_companies,
                 "source_key": source_key,
-                "channel": channel,
+                "channels": selected_channels,
                 "snapshot_date": selected_date,
                 "status": status,
                 "query": query,
+                "query_field": query_field,
             },
             metric_definition="current_job_list",
             pagination={"limit": limit, "offset": offset, "total": int(total or 0)},
@@ -612,6 +631,28 @@ def _query_scalar(
 ) -> Any:
     with engine.connect() as connection:
         return connection.execute(text(statement), params or {}).scalar_one()
+
+
+def _unique_values(values: list[str | None]) -> list[str]:
+    return list(dict.fromkeys(value for value in values if value))
+
+
+def _bind_list(params: dict[str, Any], prefix: str, values: list[str]) -> str:
+    placeholders = []
+    for index, value in enumerate(values):
+        key = f"{prefix}_{index}"
+        params[key] = value
+        placeholders.append(f":{key}")
+    return ", ".join(placeholders)
+
+
+def _fuzzy_like_pattern(query: str) -> str:
+    characters = [character for character in query.casefold() if not character.isspace()]
+    escaped = [
+        f"\\{character}" if character in {"\\", "%", "_"} else character
+        for character in characters
+    ]
+    return "%" + "%".join(escaped) + "%"
 
 
 def _error_summary(error: str | None) -> str | None:

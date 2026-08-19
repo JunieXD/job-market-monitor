@@ -85,6 +85,36 @@ def test_api_exposes_health_overview_and_read_only_job_queries() -> None:
         assert jobs.json()["meta"]["pagination"]["total"] == 1
         assert jobs.json()["data"][0]["external_id"] == "api-job-1"
 
+        fuzzy_jobs = client.get("/api/v1/jobs", params={"query": "后实"})
+        assert fuzzy_jobs.json()["meta"]["pagination"]["total"] == 1
+
+        description_jobs = client.get(
+            "/api/v1/jobs",
+            params={"query": "服开", "query_field": "description"},
+        )
+        assert description_jobs.json()["meta"]["pagination"]["total"] == 1
+
+        wrong_field = client.get(
+            "/api/v1/jobs",
+            params={"query": "后端", "query_field": "description"},
+        )
+        assert wrong_field.json()["meta"]["pagination"]["total"] == 0
+
+        filtered_jobs = client.get(
+            "/api/v1/jobs",
+            params=[
+                ("company_keys", "bytedance"),
+                ("channels", "campus"),
+            ],
+        )
+        assert filtered_jobs.json()["meta"]["pagination"]["total"] == 1
+
+        excluded_jobs = client.get(
+            "/api/v1/jobs",
+            params=[("channels", "experienced")],
+        )
+        assert excluded_jobs.json()["meta"]["pagination"]["total"] == 0
+
         detail = client.get("/api/v1/jobs/bytedance_cn/api-job-1")
         assert detail.status_code == 200
         assert detail.json()["requirements"] == "熟悉 Python"

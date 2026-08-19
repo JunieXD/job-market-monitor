@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { EChartsOption } from "echarts";
 
 import { Chart } from "@/components/Chart";
+import { Pagination } from "@/components/Pagination";
 import { SelectField } from "@/components/SelectField";
 import { CoverageNotice, EmptyState, ErrorNotice, LoadingBlock, PageHeader, Panel, RefreshButton, TableWrap } from "@/components/ui";
 import { type CityRow, type Envelope, formatNumber, formatPercent, getJson } from "@/lib/api";
@@ -16,6 +17,8 @@ export function CitiesPage() {
   const [result, setResult] = useState<Envelope<CityRow> | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(5);
   const load = useCallback(async () => {
     setLoading(true); setError(null);
     try { setResult(await getJson<Envelope<CityRow>>("/api/v1/distributions/cities", channel === "all" ? undefined : { channel })); }
@@ -25,18 +28,21 @@ export function CitiesPage() {
   useEffect(() => { void load(); }, [load]);
   const rows = useMemo(() => groupCities(result?.data ?? []), [result?.data]);
   const chart = useMemo(() => cityOption(rows), [rows]);
+  const pageCount = Math.max(1, Math.ceil(rows.length / pageSize));
+  const currentPage = Math.min(page, pageCount);
+  const visibleRows = rows.slice((currentPage - 1) * pageSize, currentPage * pageSize);
   const coverage = result?.meta.coverage;
   return (
     <>
       <PageHeader eyebrow="城市分布" title="工作机会集中在哪些城市" description="按岗位地点统计城市热度；一个岗位覆盖多个城市时，份额会在这些城市之间平均分配。" actions={<><SelectField value={channel} options={channelOptions} onValueChange={setChannel} ariaLabel="选择招聘类型" /><RefreshButton onClick={() => void load()} loading={loading} /></>} />
       {error && <ErrorNotice message={error} />}
       {coverage && <CoverageNotice completed={coverage.standard_snapshot_count} total={coverage.configured_source_channel_count} />}
-      <div className="content-grid">
+      <div className="content-grid city-grid">
         <Panel className="span-7" title="城市岗位热度" note="图表使用多城市岗位的加权岗位数，避免重复放大">
           {loading ? <LoadingBlock /> : rows.length ? <Chart option={chart} ariaLabel="城市岗位热度排行" className="chart-tall" /> : <EmptyState title="暂无城市分布数据" />}
         </Panel>
         <Panel className="span-5" title="城市排行" note={`数据日期：${coverage?.snapshot_date ?? "暂无"}`}>
-          {loading ? <LoadingBlock /> : rows.length ? <TableWrap><table className="compact-table"><thead><tr><th>城市</th><th className="numeric">关联岗位</th><th className="numeric">加权份额</th></tr></thead><tbody>{rows.slice(0, 20).map((row, index) => <tr key={row.key}><td><span className="rank">{index + 1}</span>{row.name}</td><td className="numeric">{formatNumber(row.postingCount)}</td><td className="numeric">{formatPercent(row.share)}</td></tr>)}</tbody></table></TableWrap> : <EmptyState title="暂无城市排行" />}
+          {loading ? <LoadingBlock /> : rows.length ? <><TableWrap><table className="compact-table fit-table"><thead><tr><th>城市</th><th className="numeric">关联岗位</th><th className="numeric">加权份额</th></tr></thead><tbody>{visibleRows.map((row, index) => <tr key={row.key}><td><span className="rank">{(currentPage - 1) * pageSize + index + 1}</span>{row.name}</td><td className="numeric">{formatNumber(row.postingCount)}</td><td className="numeric">{formatPercent(row.share)}</td></tr>)}</tbody></table></TableWrap><Pagination total={rows.length} page={currentPage} pageSize={pageSize} onPageChange={setPage} onPageSizeChange={(size) => { setPageSize(size); setPage(1); }} itemLabel="个城市" /></> : <EmptyState title="暂无城市排行" />}
         </Panel>
       </div>
     </>

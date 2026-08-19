@@ -1,21 +1,31 @@
 "use client";
 
 import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowLeft, ArrowRight, ExternalLink, Search } from "lucide-react";
+import { ExternalLink, Search } from "lucide-react";
 
-import { SelectField } from "@/components/SelectField";
+import { MultiSelectFilter } from "@/components/MultiSelectFilter";
+import { Pagination } from "@/components/Pagination";
+import { SearchField } from "@/components/SearchField";
 import { ChannelTag, CoverageNotice, EmptyState, ErrorNotice, LoadingBlock, PageHeader, Panel, RefreshButton, TableWrap } from "@/components/ui";
 import { type CompanyMeta, type Envelope, formatNumber, getJson, type JobRow } from "@/lib/api";
 import { channelOptions } from "@/lib/labels";
 
-const pageSize = 25;
+const searchScopes = [
+  { value: "all", label: "全部字段" },
+  { value: "title", label: "岗位名称" },
+  { value: "description", label: "岗位描述" },
+  { value: "requirements", label: "岗位要求" },
+];
+const filterChannelOptions = channelOptions.filter((option) => option.value !== "all");
 
 export function JobsPage() {
-  const [channel, setChannel] = useState("all");
-  const [company, setCompany] = useState("all");
+  const [channels, setChannels] = useState<string[] | null>(null);
+  const [companyKeys, setCompanyKeys] = useState<string[] | null>(null);
   const [draft, setDraft] = useState("");
   const [query, setQuery] = useState("");
-  const [offset, setOffset] = useState(0);
+  const [queryField, setQueryField] = useState("all");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
   const [result, setResult] = useState<Envelope<JobRow> | null>(null);
   const [companies, setCompanies] = useState<CompanyMeta[]>([]);
   const [loading, setLoading] = useState(true);
@@ -26,47 +36,42 @@ export function JobsPage() {
     try {
       const [jobs, companyResult] = await Promise.all([
         getJson<Envelope<JobRow>>("/api/v1/jobs", {
-          channel: channel === "all" ? undefined : channel,
-          company_key: company === "all" ? undefined : company,
+          channels: channels === null ? undefined : channels.length ? channels : ["__none__"],
+          company_keys: companyKeys === null ? undefined : companyKeys.length ? companyKeys : ["__none__"],
           query: query || undefined,
+          query_field: queryField,
           limit: pageSize,
-          offset,
+          offset: (page - 1) * pageSize,
         }),
         getJson<{ data: CompanyMeta[] }>("/api/v1/meta/companies"),
       ]);
       setResult(jobs); setCompanies(companyResult.data);
     } catch (caught) { setError(caught instanceof Error ? caught.message : "暂时无法读取岗位数据"); }
     finally { setLoading(false); }
-  }, [channel, company, query, offset]);
+  }, [channels, companyKeys, query, queryField, page, pageSize]);
   useEffect(() => { void load(); }, [load]);
 
-  const companyOptions = useMemo(() => [{ value: "all", label: "全部公司" }, ...companies.map((item) => ({ value: item.key, label: item.name }))], [companies]);
+  const companyOptions = useMemo(() => companies.map((item) => ({ value: item.key, label: item.name })), [companies]);
   const total = result?.meta.pagination?.total ?? 0;
-  const page = Math.floor(offset / pageSize) + 1;
-  const pages = Math.max(1, Math.ceil(total / pageSize));
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
+  const currentPage = Math.min(page, pageCount);
   const coverage = result?.meta.coverage;
-  function submit(event: FormEvent) { event.preventDefault(); setOffset(0); setQuery(draft.trim()); }
-  function changeChannel(value: string) { setOffset(0); setChannel(value); }
-  function changeCompany(value: string) { setOffset(0); setCompany(value); }
+  function submit(event: FormEvent) { event.preventDefault(); setPage(1); setQuery(draft.trim()); }
 
   return (
     <>
       <PageHeader eyebrow="岗位查询" title="查看当前仍在招聘的岗位" description="所有岗位都能回到企业招聘官网核对；列表默认使用最新一个标准日快照。" actions={<RefreshButton onClick={() => void load()} loading={loading} />} />
       {error && <ErrorNotice message={error} />}
       {coverage && <CoverageNotice completed={coverage.standard_snapshot_count} total={coverage.configured_source_channel_count} />}
-      <form className="search-toolbar" onSubmit={submit}>
-        <div className="search-input"><Search size={16} /><input value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="搜索岗位名称或职位描述" aria-label="搜索岗位" /></div>
-        <SelectField value={company} options={companyOptions} onValueChange={changeCompany} ariaLabel="选择公司" />
-        <SelectField value={channel} options={channelOptions} onValueChange={changeChannel} ariaLabel="选择招聘类型" />
+      <form className="search-toolbar jobs-toolbar" onSubmit={submit}>
+        <SearchField value={draft} onValueChange={setDraft} scope={queryField} scopes={searchScopes} onScopeChange={(value) => { setQueryField(value); setPage(1); }} placeholder="支持间隔关键词，例如“字跳”" ariaLabel="搜索岗位" />
+        <MultiSelectFilter label="公司" options={companyOptions} values={companyKeys} onValuesChange={(values) => { setCompanyKeys(values); setPage(1); }} ariaLabel="筛选公司" />
+        <MultiSelectFilter label="招聘类型" options={filterChannelOptions} values={channels} onValuesChange={(values) => { setChannels(values); setPage(1); }} ariaLabel="筛选招聘类型" />
         <button type="submit" className="primary-button"><Search size={15} /><span>搜索</span></button>
       </form>
       <Panel title="岗位列表" note={`共找到 ${formatNumber(total)} 个岗位条目，数据日期：${coverage?.snapshot_date ?? "暂无"}`}>
         {loading ? <LoadingBlock /> : result?.data.length ? <JobTable rows={result.data} /> : <EmptyState title="没有找到符合条件的岗位" detail="可以调整公司、招聘类型或搜索词后重试。" />}
-        <div className="pagination">
-          <button type="button" className="icon-button" aria-label="上一页" title="上一页" disabled={offset === 0 || loading} onClick={() => setOffset(Math.max(0, offset - pageSize))}><ArrowLeft size={17} /></button>
-          <span>第 {page} / {pages} 页</span>
-          <button type="button" className="icon-button" aria-label="下一页" title="下一页" disabled={offset + pageSize >= total || loading} onClick={() => setOffset(offset + pageSize)}><ArrowRight size={17} /></button>
-        </div>
+        <Pagination total={total} page={currentPage} pageSize={pageSize} onPageChange={setPage} onPageSizeChange={(size) => { setPageSize(size); setPage(1); }} itemLabel="个岗位" />
       </Panel>
     </>
   );
