@@ -47,12 +47,12 @@ def test_ant_rejects_inverted_experience_range() -> None:
 def test_ant_validates_page_metadata_and_final_page_size() -> None:
     payload = {
         "content": [{}],
-        "totalCount": 11,
-        "pageSize": 10,
+        "totalCount": 50,
+        "pageSize": 49,
         "currentPage": 2,
     }
 
     page = AntConnector._position_page(payload, expected_page=2)
 
-    assert page["total"] == 11
+    assert page["total"] == 50
     assert len(page["rows"]) == 1

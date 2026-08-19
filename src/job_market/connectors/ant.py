@@ -8,7 +8,7 @@ from math import ceil
 from typing import Any
 from urllib.parse import urljoin
 
-from playwright.async_api import Page, Response, Route
+from playwright.async_api import Page, Response
 
 from job_market.config import Settings
 from job_market.connectors.browser_json import (
@@ -29,7 +29,7 @@ from job_market.schemas import (
 )
 
 RESPONSE_TIMEOUT_SECONDS = 30
-UI_PAGE_SIZE = 10
+COLLECTION_PAGE_SIZE = 49
 MAX_COLLECTION_ATTEMPTS = 5
 POSITION_LIST_URL = "https://talent.antgroup.com/off-campus"
 
@@ -56,6 +56,7 @@ class AntConnector:
         self._category_responses: JsonResponseQueue = asyncio.Queue()
         self._active_category_code = ""
         self._category_catalog: tuple[CategoryFilter, ...] | None = None
+        self._position_api_url: str | None = None
         self.page.on("response", self._record_response)
 
     async def collect(
@@ -67,7 +68,6 @@ class AntConnector:
         if channel is not Channel.EXPERIENCED:
             raise ValueError("Ant connector supports only the experienced channel")
 
-        await self.page.route("**/*", _skip_nonessential_assets)
         root_payload = await self._open_root()
         root = self._position_page(root_payload, expected_page=1)
         total_count = root["total"]
@@ -95,7 +95,7 @@ class AntConnector:
         max_pages: int | None,
     ) -> tuple[dict[str, JobRecord], bool]:
         union_by_id: dict[str, JobRecord] = {}
-        total_pages = ceil(total_count / UI_PAGE_SIZE) if total_count else 0
+        total_pages = ceil(total_count / COLLECTION_PAGE_SIZE) if total_count else 0
 
         for attempt in range(1, MAX_COLLECTION_ATTEMPTS + 1):
             payload = initial_payload if attempt == 1 else await self._open_root()
@@ -114,7 +114,6 @@ class AntConnector:
             for page_number in range(1, total_pages + 1):
                 if max_pages is not None and self.pages_fetched >= max_pages:
                     return union_by_id or pass_by_id, False
-                await self._assert_active_page(page_number)
                 current = self._position_page(payload, expected_page=page_number)
                 self.pages_fetched += 1
                 self._save_payload(
@@ -135,7 +134,7 @@ class AntConnector:
                         )
                     pass_by_id[record.external_id] = record
                 if page_number < total_pages:
-                    payload = await self._next_page(page_number + 1)
+                    payload = await self._fetch_page(page_number + 1)
 
             for external_id, record in pass_by_id.items():
                 previous = union_by_id.get(external_id)
@@ -160,6 +159,8 @@ class AntConnector:
         )
 
     async def _open_root(self) -> dict[str, Any]:
+        if self._position_api_url is not None:
+            return await self._fetch_page(1)
         await self._rate_limit()
         drain_json_responses(self._position_responses)
         if self._category_catalog is None:
@@ -170,7 +171,7 @@ class AntConnector:
             wait_until="domcontentloaded",
             timeout=60_000,
         )
-        payload = await self._next_payload("positions:root:1")
+        await self._next_payload("positions:root:1")
         if self._category_catalog is None:
             category_payload = await next_json_payload(
                 self._category_responses,
@@ -179,33 +180,53 @@ class AntConnector:
             )
             self._category_catalog = self.parse_category_catalog(category_payload)
             self._save_category_catalog(category_payload)
-        return payload
+        if self._position_api_url is None:
+            raise RuntimeError("Ant position API URL was not observed")
+        # Unload the large recruitment SPA after it supplied the public token
+        # and category catalog. All position pages use the official JSON API.
+        await self.page.goto(
+            "about:blank",
+            wait_until="commit",
+            timeout=60_000,
+        )
+        return await self._fetch_page(1)
 
-    async def _next_page(self, page_number: int) -> dict[str, Any]:
+    async def _fetch_page(self, page_number: int) -> dict[str, Any]:
+        if self._position_api_url is None:
+            raise RuntimeError("Ant position API URL is unavailable")
         await self._rate_limit()
-        drain_json_responses(self._position_responses)
-        next_button = self.page.locator(".ant-pagination-next")
-        if await next_button.count() != 1:
-            raise RuntimeError("Ant pagination has no unique next-page control")
-        classes = await next_button.get_attribute("class") or ""
-        aria_disabled = await next_button.get_attribute("aria-disabled")
-        if "ant-pagination-disabled" in classes or aria_disabled == "true":
-            raise RuntimeError(f"Ant pagination ended before page {page_number}")
-        await next_button.click()
-        payload = await self._next_payload(f"positions:{page_number}")
-        await self._assert_active_page(page_number)
+        response = await self.page.request.post(
+            self._position_api_url,
+            headers={"Content-Type": "application/json"},
+            data={
+                "key": "",
+                "regions": "",
+                "categories": "",
+                "subCategories": "",
+                "bgCode": "",
+                "socialQrCode": "",
+                "pageIndex": page_number,
+                "pageSize": COLLECTION_PAGE_SIZE,
+                "channel": "group_official_site",
+                "language": "zh",
+            },
+            timeout=60_000,
+            fail_on_status_code=False,
+        )
+        if response.status != 200:
+            raise RuntimeError(
+                f"Ant page {page_number} returned HTTP {response.status}"
+            )
+        payload = await response.json()
+        if not isinstance(payload, dict):
+            raise RuntimeError(f"Ant page {page_number} returned invalid JSON")
+        if payload.get("success") is not True or not isinstance(
+            payload.get("content"), list
+        ):
+            message = json.dumps(payload, ensure_ascii=False)[:1000]
+            raise RuntimeError(f"Invalid Ant response for page {page_number}: {message}")
+        self._last_request_at = asyncio.get_running_loop().time()
         return payload
-
-    async def _assert_active_page(self, expected_page: int) -> None:
-        active = self.page.locator(".ant-pagination-item-active")
-        deadline = asyncio.get_running_loop().time() + RESPONSE_TIMEOUT_SECONDS
-        while asyncio.get_running_loop().time() < deadline:
-            if await active.count() == 1:
-                text = (await active.inner_text()).strip()
-                if text == str(expected_page):
-                    return
-            await asyncio.sleep(0.05)
-        raise RuntimeError(f"Ant page did not render active page {expected_page}")
 
     async def _next_payload(self, operation: str) -> dict[str, Any]:
         payload = await next_json_payload(
@@ -229,9 +250,10 @@ class AntConnector:
         total = _response_int(payload.get("totalCount"), "totalCount", allow_zero=True)
         page_size = _response_int(payload.get("pageSize"), "pageSize")
         page_number = _response_int(payload.get("currentPage"), "currentPage")
-        if page_size != UI_PAGE_SIZE:
+        if page_size != COLLECTION_PAGE_SIZE:
             raise RuntimeError(
-                f"Ant page size changed: expected={UI_PAGE_SIZE}, got={page_size}"
+                "Ant page size changed: "
+                f"expected={COLLECTION_PAGE_SIZE}, got={page_size}"
             )
         if page_number != expected_page:
             raise RuntimeError(
@@ -366,6 +388,9 @@ class AntConnector:
                 return
             if not isinstance(post_data, dict):
                 return
+            self._position_api_url = response.url
+            if post_data.get("pageSize") != 10:
+                return
             if _optional(post_data.get("categories")) != (
                 self._active_category_code or None
             ):
@@ -406,13 +431,6 @@ class AntConnector:
                     payload=payload,
                 )
             )
-
-async def _skip_nonessential_assets(route: Route) -> None:
-    if route.request.resource_type in {"image", "media", "font"}:
-        await route.abort()
-    else:
-        await route.continue_()
-
 
 def _optional(value: Any) -> str | None:
     if value is None:
