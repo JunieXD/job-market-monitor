@@ -66,10 +66,14 @@ docker compose run --rm collector crawl \
 
 5. 先运行一个来源的 dry-run，再运行实际入库。确认正常后才安装 systemd timer。
 
+`api` 和 `web` 使用 `restart: unless-stopped`，Docker 服务或虚拟机重启后会自动恢复。可通过
+`docker compose ps` 检查三个常驻服务；采集器只在定时任务执行时创建临时容器。
+
 ## systemd 定时任务
 
-批量脚本会读取注册表中的所有来源，并为每个来源独立创建临时采集容器。单个来源失败会被记录，
-并继续运行后续来源；批次末尾会执行统一检查，任何失败都会让 service 返回非零状态。
+批量脚本会读取当天尚未生成标准快照的来源，并为每个来源独立创建临时采集容器。单个来源失败会
+被记录并继续运行后续来源；批次末尾会执行统一检查，任何失败都会让 service 返回非零状态。
+当天已经完成全部渠道的来源自动跳过，因此 timer 重启或重复触发不会重复采集完整来源。
 
 ```bash
 sudo install -m 0755 deploy/run-scheduled-crawls.sh \
@@ -87,6 +91,13 @@ sudo systemctl enable --now job-market-crawl.timer
 ```bash
 systemctl list-timers job-market-crawl.timer
 journalctl -u job-market-crawl.service -n 200 --no-pager
+```
+
+需要立即开始一次真实采集时，可以手工启动同一个 oneshot 服务；该操作仍受文件锁和当日完成状态保护：
+
+```bash
+sudo systemctl start job-market-crawl.service
+systemctl status job-market-crawl.service --no-pager
 ```
 
 默认每天上海时间 03:15 运行，带有持久化触发和最多 5 分钟的随机延迟。批次总超时为 23 小时，
@@ -108,6 +119,9 @@ journalctl -u job-market-crawl.service -n 200 --no-pager
 本地 Compose 的网站入口为 `http://<Ubuntu虚拟机IP>:3000`，API 入口为
 `http://<Ubuntu虚拟机IP>:8000/docs`。前端容器通过 `API_INTERNAL_URL=http://api:8000` 访问 API，
 浏览器只访问网站同源的 `/api/v1` 路径。
+
+`http://<Ubuntu虚拟机IP>:3000/collection` 会每 15 秒更新当天的完成、运行、失败、结果不完整和
+等待采集渠道。该页面的数据直接来自 `crawl_runs` 和 `daily_snapshots`，不是读取 systemd 日志猜测。
 
 生产 Compose 不映射宿主端口，网站和 API 会加入现有 PostgreSQL network。需要将服务器已有的
 Nginx/Caddy 反向代理到 `web:3000`；不要把 API 端口直接暴露到公网。

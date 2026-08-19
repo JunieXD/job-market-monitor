@@ -171,7 +171,7 @@ def test_job_closes_across_daily_snapshots_and_reopens_with_history() -> None:
         assert field_stat.non_empty_count == 1
 
 
-def test_same_day_rerun_is_observed_but_does_not_advance_lifecycle() -> None:
+def test_same_day_rerun_replaces_daily_snapshot_without_advancing_lifecycle() -> None:
     repository, _ = make_repository()
     source_id = repository.ensure_source()
     first_run = repository.start_run(source_id, Channel.CAMPUS.value)
@@ -180,15 +180,28 @@ def test_same_day_rerun_is_observed_but_does_not_advance_lifecycle() -> None:
     second_run = repository.start_run(source_id, Channel.CAMPUS.value)
     stats = repository.ingest(second_run, result([]))
 
-    assert stats["canonical"] is False
+    assert stats["canonical"] is True
+    assert stats["lifecycle_advanced"] is False
     with Session(repository.engine) as session:
         job = session.scalar(select(Job))
         snapshot = session.scalar(select(DailySnapshot))
         assert job is not None
         assert snapshot is not None
         assert job.missing_streak == 0
-        assert snapshot.crawl_run_id == first_run
+        assert snapshot.crawl_run_id == second_run
         assert session.query(JobLifecycleEvent).count() == 1
+
+
+def test_due_sources_are_removed_after_all_channels_have_daily_snapshots() -> None:
+    repository, _ = make_repository()
+    source_id = repository.ensure_source(channels={"campus": None})
+
+    assert repository.due_source_keys() == {"bytedance_cn"}
+
+    run_id = repository.start_run(source_id, Channel.CAMPUS.value)
+    repository.ingest(run_id, result([make_job()]))
+
+    assert repository.due_source_keys() == set()
 
 
 def test_non_authoritative_run_stores_observations_without_advancing_absence() -> None:

@@ -47,4 +47,7 @@ class Settings(BaseSettings):
     abandoned_run_after_minutes: int = Field(default=180, ge=1, le=1440)
     raw_min_free_gib: float = Field(default=5.0, ge=0.1, le=1024)
     missing_runs_before_close: int = Field(default=2, ge=2, le=30)
+    daily_crawl_hour: int = Field(default=3, ge=0, le=23)
+    daily_crawl_minute: int = Field(default=15, ge=0, le=59)
+    daily_crawl_timezone: str = "Asia/Shanghai"
     headless: bool = True

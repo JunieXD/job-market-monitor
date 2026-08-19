@@ -92,6 +92,14 @@ def test_api_exposes_health_overview_and_read_only_job_queries() -> None:
         missing = client.get("/api/v1/jobs/bytedance_cn/does-not-exist")
         assert missing.status_code == 404
 
+        collection = client.get("/api/v1/collection/status")
+        assert collection.status_code == 200
+        collection_body = collection.json()
+        assert collection_body["summary"]["total"] == 2
+        assert collection_body["summary"]["completed"] == 1
+        assert collection_body["summary"]["pending"] == 1
+        assert collection_body["schedule"]["frequency"] == "daily"
+
 
 def test_api_returns_analysis_envelopes_for_categories_and_cities() -> None:
     with make_api_client() as client:

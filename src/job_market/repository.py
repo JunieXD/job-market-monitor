@@ -222,7 +222,8 @@ class Repository:
             source = session.execute(
                 select(Source).where(Source.id == source_id).with_for_update()
             ).scalar_one()
-            canonical = result.absence_authoritative and self._claim_daily_snapshot(
+            daily_snapshot = result.absence_authoritative
+            advances_lifecycle = daily_snapshot and self._set_latest_daily_snapshot(
                 session,
                 run,
                 now,
@@ -277,7 +278,9 @@ class Repository:
                         source_id=source_id,
                         external_id=record.external_id,
                         first_seen_at=now,
-                        first_canonical_seen_on=run.snapshot_date if canonical else None,
+                        first_canonical_seen_on=(
+                            run.snapshot_date if daily_snapshot else None
+                        ),
                         last_changed_at=now,
                         status="active",
                         missing_streak=0,
@@ -380,7 +383,7 @@ class Repository:
                             f"Job {job.id} references content hash without a stored version"
                         )
 
-                    if canonical and was_closed:
+                    if daily_snapshot and was_closed:
                         reopened_count += 1
                         self._add_lifecycle_event(
                             session,
@@ -394,7 +397,7 @@ class Repository:
                         )
                         job.status = "active"
                         job.closed_at = None
-                    elif canonical and previous_missing_streak:
+                    elif daily_snapshot and previous_missing_streak:
                         self._add_lifecycle_event(
                             session,
                             job=job,
@@ -408,7 +411,7 @@ class Repository:
                                 "previous_missing_streak": previous_missing_streak,
                             },
                         )
-                    if canonical:
+                    if daily_snapshot:
                         if job.first_canonical_seen_on is None:
                             job.first_canonical_seen_on = run.snapshot_date
                         job.missing_streak = 0
@@ -430,7 +433,7 @@ class Repository:
                 )
 
             closed_count = 0
-            if canonical:
+            if advances_lifecycle:
                 closed_count = self._reconcile_missing(
                     session,
                     source_id=source_id,
@@ -457,7 +460,8 @@ class Repository:
             "enriched": enriched_count,
             "reopened": reopened_count,
             "closed": closed_count,
-            "canonical": canonical,
+            "canonical": daily_snapshot,
+            "lifecycle_advanced": advances_lifecycle,
             "absence_authoritative": result.absence_authoritative,
         }
 
@@ -476,7 +480,7 @@ class Repository:
                 self._add_snapshots(session, run_id, snapshots or [])
 
     @staticmethod
-    def _claim_daily_snapshot(
+    def _set_latest_daily_snapshot(
         session: Session,
         run: CrawlRun,
         created_at: datetime,
@@ -489,7 +493,9 @@ class Repository:
             )
         )
         if existing is not None:
-            return existing.crawl_run_id == run.id
+            existing.crawl_run_id = run.id
+            existing.created_at = created_at
+            return False
         is_baseline = (
             session.scalar(
                 select(func.count(DailySnapshot.id)).where(
@@ -510,6 +516,37 @@ class Repository:
             )
         )
         return True
+
+    def due_source_keys(self) -> set[str]:
+        """Return enabled sources missing at least one standard snapshot today."""
+
+        now = self._now()
+        due: set[str] = set()
+        with Session(self.engine) as session:
+            sources = session.scalars(
+                select(Source).where(Source.enabled.is_(True)).order_by(Source.key)
+            ).all()
+            for source in sources:
+                snapshot_date = now.astimezone(ZoneInfo(source.timezone)).date()
+                active_channels = set(
+                    session.scalars(
+                        select(SourceChannel.channel).where(
+                            SourceChannel.source_id == source.id,
+                            SourceChannel.status == "active",
+                        )
+                    )
+                )
+                completed_channels = set(
+                    session.scalars(
+                        select(DailySnapshot.channel).where(
+                            DailySnapshot.source_id == source.id,
+                            DailySnapshot.snapshot_date == snapshot_date,
+                        )
+                    )
+                )
+                if active_channels - completed_channels:
+                    due.add(source.key)
+        return due
 
     @staticmethod
     def _create_version(

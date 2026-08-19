@@ -502,6 +502,11 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["json", "lines", "summary"],
         default="json",
     )
+    list_sources.add_argument(
+        "--due-only",
+        action="store_true",
+        help="Only list sources missing a standard snapshot for today",
+    )
 
     recover_runs = subparsers.add_parser(
         "recover-runs",
@@ -721,19 +726,28 @@ def main() -> None:
         return
 
     if args.command == "list-sources":
+        names = list(SOURCE_SPECS)
+        if args.due_only:
+            engine = make_engine(settings)
+            create_schema(engine)
+            due_keys = Repository(
+                engine,
+                settings.missing_runs_before_close,
+            ).due_source_keys()
+            names = [name for name in names if SOURCE_SPECS[name]["key"] in due_keys]
         if args.format == "lines":
-            for name in SOURCE_SPECS:
+            for name in names:
                 print(name)
         elif args.format == "summary":
             print(
                 json.dumps(
                     {
                         "companies": len(
-                            {spec["company_key"] for spec in SOURCE_SPECS.values()}
+                            {SOURCE_SPECS[name]["company_key"] for name in names}
                         ),
-                        "sources": len(SOURCE_SPECS),
+                        "sources": len(names),
                         "channels": sum(
-                            len(spec["channels"]) for spec in SOURCE_SPECS.values()
+                            len(SOURCE_SPECS[name]["channels"]) for name in names
                         ),
                     },
                     sort_keys=True,
@@ -745,12 +759,13 @@ def main() -> None:
                     [
                         {
                             "name": name,
-                            "source_key": spec["key"],
+                            "source_key": SOURCE_SPECS[name]["key"],
                             "channels": [
-                                channel.value for channel in spec["channels"]
+                                channel.value
+                                for channel in SOURCE_SPECS[name]["channels"]
                             ],
                         }
-                        for name, spec in SOURCE_SPECS.items()
+                        for name in names
                     ],
                     ensure_ascii=False,
                 )

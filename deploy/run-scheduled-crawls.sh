@@ -83,10 +83,14 @@ if ! run_container recover-runs; then
   exit 1
 fi
 
-source_output=$(run_container list-sources --format lines)
-if [[ $? -ne 0 || -z "$source_output" ]]; then
+source_output=$(run_container list-sources --format lines --due-only)
+if [[ $? -ne 0 ]]; then
   log_event "batch_preflight_failed" "source_catalog_unavailable"
   exit 1
+fi
+if [[ -z "$source_output" ]]; then
+  log_event "batch_skipped" "all_sources_already_collected_today"
+  exit 0
 fi
 
 sources=()

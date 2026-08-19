@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from sqlalchemy import text
@@ -211,26 +212,27 @@ def create_app(
         channel: str | None = None,
     ) -> AnalyticsEnvelope:
         analytics = AnalyticsRepository(request.app.state.engine)
+        coverage = analytics.coverage(snapshot_date)
+        selected_date = coverage["snapshot_date"]
         if company_key is None:
             rows = analytics.market_category_distribution(
-                snapshot_date=snapshot_date,
+                snapshot_date=selected_date,
                 channel=channel,
             )
             metric = "market_category_distribution"
         else:
             rows = analytics.category_distribution(
                 company_key=company_key,
-                snapshot_date=snapshot_date,
+                snapshot_date=selected_date,
                 channel=channel,
             )
             metric = "source_category_distribution"
-        coverage = analytics.coverage(snapshot_date)
         return _envelope(
             rows,
             coverage=coverage,
             filters={
                 "company_key": company_key,
-                "snapshot_date": snapshot_date,
+                "snapshot_date": selected_date,
                 "channel": channel,
             },
             metric_definition=metric,
@@ -248,18 +250,19 @@ def create_app(
         channel: str | None = None,
     ) -> AnalyticsEnvelope:
         analytics = AnalyticsRepository(request.app.state.engine)
+        coverage = analytics.coverage(snapshot_date)
+        selected_date = coverage["snapshot_date"]
         rows = analytics.city_distribution(
             company_key=company_key,
-            snapshot_date=snapshot_date,
+            snapshot_date=selected_date,
             channel=channel,
         )
-        coverage = analytics.coverage(snapshot_date)
         return _envelope(
             rows,
             coverage=coverage,
             filters={
                 "company_key": company_key,
-                "snapshot_date": snapshot_date,
+                "snapshot_date": selected_date,
                 "channel": channel,
             },
             metric_definition=(
@@ -318,13 +321,22 @@ def create_app(
         company_key: str | None = None,
         source_key: str | None = None,
         channel: str | None = None,
+        snapshot_date: date | None = None,
         status: str = "active",
         query: str | None = None,
         limit: int = Query(default=50, ge=1, le=100),
         offset: int = Query(default=0, ge=0, le=100000),
     ) -> AnalyticsEnvelope:
-        filters = ["j.status = :status"]
-        params: dict[str, Any] = {"status": status, "limit": limit, "offset": offset}
+        analytics = AnalyticsRepository(request.app.state.engine)
+        coverage = analytics.coverage(snapshot_date)
+        selected_date = coverage["snapshot_date"]
+        filters = ["ds.snapshot_date = :snapshot_date", "j.status = :status"]
+        params: dict[str, Any] = {
+            "snapshot_date": selected_date,
+            "status": status,
+            "limit": limit,
+            "offset": offset,
+        }
         if company_key is not None:
             filters.append("c.key = :company_key")
             params["company_key"] = company_key
@@ -346,7 +358,9 @@ def create_app(
                    c.name AS company_name, j.channel, j.title, j.source_url,
                    j.published_at, j.source_updated_at, j.status,
                    j.recruitment_count, j.first_seen_at, j.last_seen_at
-            FROM jobs AS j
+            FROM daily_snapshots AS ds
+            JOIN job_observations AS jo ON jo.crawl_run_id = ds.crawl_run_id
+            JOIN jobs AS j ON j.id = jo.job_id
             JOIN sources AS s ON s.id = j.source_id
             JOIN companies AS c ON c.id = s.company_id
             WHERE {where}
@@ -359,21 +373,23 @@ def create_app(
             engine,
             f"""
             SELECT COUNT(*)
-            FROM jobs AS j
+            FROM daily_snapshots AS ds
+            JOIN job_observations AS jo ON jo.crawl_run_id = ds.crawl_run_id
+            JOIN jobs AS j ON j.id = jo.job_id
             JOIN sources AS s ON s.id = j.source_id
             JOIN companies AS c ON c.id = s.company_id
             WHERE {where}
             """,
             params,
         )
-        analytics = AnalyticsRepository(engine)
         return _envelope(
             rows,
-            coverage=analytics.coverage(),
+            coverage=coverage,
             filters={
                 "company_key": company_key,
                 "source_key": source_key,
                 "channel": channel,
+                "snapshot_date": selected_date,
                 "status": status,
                 "query": query,
             },
@@ -435,6 +451,123 @@ def create_app(
             metric_definition="source_coverage",
         )
 
+    @app.get("/api/v1/collection/status", tags=["采集"])
+    def collection_status(
+        request: Request,
+        snapshot_date: date | None = None,
+    ) -> dict[str, Any]:
+        settings = request.app.state.settings
+        timezone = ZoneInfo(settings.daily_crawl_timezone)
+        now = datetime.now(timezone)
+        selected_date = snapshot_date or now.date()
+        rows = _query_rows(
+            request.app.state.engine,
+            """
+            WITH ranked_runs AS (
+                SELECT cr.*,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY cr.source_id, cr.channel
+                           ORDER BY cr.started_at DESC, cr.id DESC
+                       ) AS row_number
+                FROM crawl_runs AS cr
+                WHERE cr.snapshot_date = :snapshot_date
+            ), latest_standard AS (
+                SELECT source_id, channel, MAX(snapshot_date) AS last_standard_date
+                FROM daily_snapshots
+                GROUP BY source_id, channel
+            )
+            SELECT s.key AS source_key, s.display_name, c.key AS company_key,
+                   c.name AS company_name, sc.channel, lr.id AS run_id,
+                   lr.status AS attempt_status, lr.started_at, lr.finished_at,
+                   lr.discovered_count, lr.page_count, lr.complete,
+                   lr.absence_authoritative, lr.error,
+                   CASE WHEN ds.id IS NULL THEN 0 ELSE 1 END AS is_standard,
+                   ls.last_standard_date
+            FROM sources AS s
+            JOIN companies AS c ON c.id = s.company_id
+            JOIN source_channels AS sc ON sc.source_id = s.id
+            LEFT JOIN ranked_runs AS lr
+                ON lr.source_id = s.id
+               AND lr.channel = sc.channel
+               AND lr.row_number = 1
+            LEFT JOIN daily_snapshots AS ds
+                ON ds.source_id = s.id
+               AND ds.channel = sc.channel
+               AND ds.snapshot_date = :snapshot_date
+            LEFT JOIN latest_standard AS ls
+                ON ls.source_id = s.id AND ls.channel = sc.channel
+            WHERE s.enabled AND sc.status = 'active'
+            ORDER BY
+                CASE
+                    WHEN lr.status = 'running' THEN 0
+                    WHEN ds.id IS NOT NULL THEN 1
+                    WHEN lr.status = 'failed' THEN 2
+                    ELSE 3
+                END,
+                c.name, s.key, sc.channel
+            """,
+            {"snapshot_date": selected_date},
+        )
+        state_counts = {
+            "completed": 0,
+            "running": 0,
+            "failed": 0,
+            "partial": 0,
+            "pending": 0,
+        }
+        for row in rows:
+            error = row.pop("error", None)
+            row["error_summary"] = _error_summary(error)
+            row["is_standard"] = bool(row["is_standard"])
+            if row["attempt_status"] == "running":
+                state = "running"
+            elif row["attempt_status"] == "failed":
+                state = "failed"
+            elif row["is_standard"]:
+                state = "completed"
+            elif row["attempt_status"] == "success":
+                state = "partial"
+            else:
+                state = "pending"
+            row["state"] = state
+            state_counts[state] += 1
+
+        total = len(rows)
+        completed = sum(bool(row["is_standard"]) for row in rows)
+        schedule_at = datetime.combine(
+            now.date(),
+            time(settings.daily_crawl_hour, settings.daily_crawl_minute),
+            tzinfo=timezone,
+        )
+        if schedule_at <= now:
+            schedule_at += timedelta(days=1)
+        started = [row["started_at"] for row in rows if row["started_at"]]
+        activity = [
+            row["finished_at"] or row["started_at"]
+            for row in rows
+            if row["finished_at"] or row["started_at"]
+        ]
+        return {
+            "snapshot_date": selected_date,
+            "timezone": settings.daily_crawl_timezone,
+            "checked_at": now,
+            "schedule": {
+                "frequency": "daily",
+                "hour": settings.daily_crawl_hour,
+                "minute": settings.daily_crawl_minute,
+                "next_run_at": schedule_at,
+            },
+            "summary": {
+                "total": total,
+                **state_counts,
+                "completed": completed,
+                "progress_ratio": completed / total if total else 0.0,
+                "started_at": min(started) if started else None,
+                "last_activity_at": max(activity) if activity else None,
+            },
+            "channels": rows,
+        }
+
     return app
 
 
@@ -479,3 +612,10 @@ def _query_scalar(
 ) -> Any:
     with engine.connect() as connection:
         return connection.execute(text(statement), params or {}).scalar_one()
+
+
+def _error_summary(error: str | None) -> str | None:
+    if not error:
+        return None
+    lines = [line.strip() for line in error.splitlines() if line.strip()]
+    return lines[-1][:300] if lines else None

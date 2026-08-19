@@ -69,6 +69,7 @@ services:
     build:
       context: .
     init: true
+    restart: unless-stopped
     entrypoint: ["uvicorn"]
     command:
       [
@@ -82,6 +83,9 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://job_market:change-me-before-deploying@postgres:5432/job_market}
       SOURCE_STALE_AFTER_HOURS: ${SOURCE_STALE_AFTER_HOURS:-36}
+      DAILY_CRAWL_HOUR: ${DAILY_CRAWL_HOUR:-3}
+      DAILY_CRAWL_MINUTE: ${DAILY_CRAWL_MINUTE:-15}
+      DAILY_CRAWL_TIMEZONE: ${DAILY_CRAWL_TIMEZONE:-Asia/Shanghai}
     ports:
       - "8000:8000"
     depends_on:
@@ -94,6 +98,7 @@ services:
       args:
         API_INTERNAL_URL: http://api:8000
     init: true
+    restart: unless-stopped
     environment:
       API_INTERNAL_URL: http://api:8000
     ports:
