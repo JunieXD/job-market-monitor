@@ -87,27 +87,109 @@ run_case() {
 
 monitor_stats() {
   local stats_file="${run_dir}/docker-stats.tsv"
-  local any_running
+  local system_stats_file="${run_dir}/system-stats.tsv"
+  local system_summary_file="${run_dir}/system-summary.txt"
   local name
-  printf 'time\tname\tcpu\tmemory\tnet_io\n' >"$stats_file"
+  local mem_available_kib=0 swap_free_kib=0 swap_total_kib=0
+  local pswpin pswpout oom_kill load_one
+  local first_pswpin=0 first_pswpout=0 first_oom_kill=0
+  local last_pswpin=0 last_pswpout=0 last_oom_kill=0
+  local min_mem_available_kib=0 min_swap_free_kib=0
+  local sample_count=0
+  printf 'time\tname\tcpu\tmemory\tmemory_percent\tnet_io\n' >"$stats_file"
+  printf 'time\tmem_available_kib\tswap_free_kib\tpswpin\tpswpout\toom_kill\tload_one\n' \
+    >"$system_stats_file"
   while [[ -e "$monitor_marker" ]]; do
-    any_running=false
-    "$DOCKER_BIN" stats --no-stream \
-      --format '{{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.NetIO}}' \
-      "${benchmark_names[@]}" 2>/dev/null \
-      | while IFS=$'\t' read -r name cpu memory net_io; do
-          printf '%s\t%s\t%s\t%s\t%s\n' \
-            "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$name" "$cpu" "$memory" "$net_io" \
-            >>"$stats_file"
-        done
+    if [[ -r /proc/meminfo && -r /proc/vmstat && -r /proc/loadavg ]]; then
+      read -r mem_available_kib swap_free_kib swap_total_kib < <(
+        awk '
+          $1 == "MemAvailable:" { available = $2 }
+          $1 == "SwapFree:" { free = $2 }
+          $1 == "SwapTotal:" { total = $2 }
+          END { print available, free, total }
+        ' /proc/meminfo
+      )
+      read -r pswpin pswpout oom_kill < <(
+        awk '
+          $1 == "pswpin" { swap_in = $2 }
+          $1 == "pswpout" { swap_out = $2 }
+          $1 == "oom_kill" { oom = $2 }
+          END { print swap_in + 0, swap_out + 0, oom + 0 }
+        ' /proc/vmstat
+      )
+      read -r load_one _ </proc/loadavg
+    else
+      mem_available_kib=0
+      swap_free_kib=0
+      swap_total_kib=0
+      pswpin=0
+      pswpout=0
+      oom_kill=0
+      load_one=0
+    fi
+    if (( sample_count == 0 )); then
+      first_pswpin=$pswpin
+      first_pswpout=$pswpout
+      first_oom_kill=$oom_kill
+      min_mem_available_kib=$mem_available_kib
+      min_swap_free_kib=$swap_free_kib
+    fi
+    (( mem_available_kib < min_mem_available_kib )) && min_mem_available_kib=$mem_available_kib
+    (( swap_free_kib < min_swap_free_kib )) && min_swap_free_kib=$swap_free_kib
+    last_pswpin=$pswpin
+    last_pswpout=$pswpout
+    last_oom_kill=$oom_kill
+    ((sample_count += 1))
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$mem_available_kib" "$swap_free_kib" \
+      "$pswpin" "$pswpout" "$oom_kill" "$load_one" >>"$system_stats_file"
     for name in "${benchmark_names[@]}"; do
       if [[ "$($DOCKER_BIN inspect -f '{{.State.Running}}' "$name" 2>/dev/null)" == "true" ]]; then
-        any_running=true
-        break
+        "$DOCKER_BIN" stats --no-stream \
+          --format '{{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.MemPerc}}\t{{.NetIO}}' \
+          "$name" 2>/dev/null \
+          | while IFS=$'\t' read -r name cpu memory memory_percent net_io; do
+              printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+                "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$name" "$cpu" "$memory" \
+                "$memory_percent" "$net_io" \
+                >>"$stats_file"
+            done
       fi
     done
     sleep 0.5
   done
+  printf 'samples=%s\n' "$sample_count" >"$system_summary_file"
+  printf 'min_mem_available_kib=%s\n' "$min_mem_available_kib" >>"$system_summary_file"
+  printf 'max_swap_used_kib=%s\n' "$((swap_total_kib - min_swap_free_kib))" \
+    >>"$system_summary_file"
+  printf 'swap_in_pages_delta=%s\n' "$((last_pswpin - first_pswpin))" \
+    >>"$system_summary_file"
+  printf 'swap_out_pages_delta=%s\n' "$((last_pswpout - first_pswpout))" \
+    >>"$system_summary_file"
+  printf 'oom_kill_delta=%s\n' "$((last_oom_kill - first_oom_kill))" \
+    >>"$system_summary_file"
+  awk -F '\t' '
+    BEGIN { OFS = "\t"; print "name", "peak_cpu", "peak_memory", "peak_memory_percent", "final_net_io" }
+    NR > 1 {
+      cpu = $3
+      memory_percent = $5
+      gsub(/%/, "", cpu)
+      gsub(/%/, "", memory_percent)
+      if (!( $2 in peak_cpu ) || cpu + 0 > peak_cpu[$2]) {
+        peak_cpu[$2] = cpu + 0
+      }
+      if (!( $2 in peak_memory_percent ) || memory_percent + 0 > peak_memory_percent[$2]) {
+        peak_memory_percent[$2] = memory_percent + 0
+        peak_memory[$2] = $4
+      }
+      final_net_io[$2] = $6
+    }
+    END {
+      for (name in peak_cpu) {
+        printf "%s\t%.2f%%\t%s\t%.2f%%\t%s\n", name, peak_cpu[name], peak_memory[name], peak_memory_percent[name], final_net_io[name]
+      }
+    }
+  ' "$stats_file" >"${run_dir}/container-peaks.tsv"
 }
 
 job_is_running() {
@@ -172,9 +254,25 @@ rm -f "$monitor_marker"
 wait "$stats_pid" >/dev/null 2>&1 || true
 stats_pid=""
 
+successful_cases=0
+failed_cases=0
+for exit_file in "${run_dir}"/*.exit; do
+  exit_code=$(<"$exit_file")
+  if [[ "$exit_code" == "0" ]]; then
+    ((successful_cases += 1))
+  else
+    ((failed_cases += 1))
+  fi
+done
+
 printf 'duration_seconds=%s\n' "$((SECONDS - started_at))" >"${run_dir}/summary.txt"
 printf 'parallel=%s\nmax_pages=%s\n' "$BENCHMARK_PARALLEL" "$BENCHMARK_MAX_PAGES" \
+  >>"${run_dir}/summary.txt"
+printf 'successful_cases=%s\nfailed_cases=%s\n' "$successful_cases" "$failed_cases" \
   >>"${run_dir}/summary.txt"
 log "benchmark finished output=${run_dir}"
 trap - INT TERM HUP EXIT
 cleanup
+if (( failed_cases > 0 )); then
+  exit 1
+fi

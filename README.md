@@ -63,8 +63,9 @@ uv run job-market list-sources --format json
 定时批次按来源并发、来源内部渠道串行。当前 Ubuntu 试运行默认最多同时运行 2 个来源，每个来源
 启动间隔 3 秒；同一批次由 `flock` 防重入，来源有独立超时、重试和容器清理。PostgreSQL 的
 事务级 advisory lock 只保护公司/来源维度、岗位入库和生命周期写入，不会把网络抓取重新变成串行。
-默认值由虚拟机实验确认后再调整，可通过 systemd unit 中的 `MAX_PARALLEL_SOURCES` 和
-`SOURCE_START_DELAY_SECONDS` 覆盖。
+默认并发 2 已由 2 vCPU、3.3 GiB Ubuntu 虚拟机的完整矩阵确认：比顺序执行缩短 37% 至 40%，
+并发 3 收益很小，并发 4 出现明显 swap 且更慢。可通过 systemd unit 中的
+`MAX_PARALLEL_SOURCES` 和 `SOURCE_START_DELAY_SECONDS` 覆盖。
 
 采集器默认阻止常见图片、字体、音视频 URL 和 Service Worker。资源阻止使用 Chromium CDP，避免
 Playwright `context.route` 关闭 HTTP 缓存；岗位 JSON、脚本和必要的接口请求仍保留。每个渠道输出
