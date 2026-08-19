@@ -22,6 +22,7 @@ from job_market.models import (
     SourceChannel,
     SourceLocationMapping,
 )
+from job_market.quality import DataQualityChecker
 from job_market.repository import Repository
 from job_market.schemas import (
     SOURCE_FACT_CONTRACT_VERSION,
@@ -220,6 +221,16 @@ def test_due_source_channels_only_returns_missing_channels() -> None:
     assert repository.due_source_channels() == {
         "bytedance_cn": {"experienced"}
     }
+
+
+def test_job_without_source_location_is_valid_when_current_sets_match() -> None:
+    repository, _ = make_repository()
+    source_id = repository.ensure_source(channels={"campus": None})
+    run_id = repository.start_run(source_id, Channel.CAMPUS.value)
+
+    repository.ingest(run_id, result([make_job(locations=[])]))
+
+    assert DataQualityChecker(repository.engine).run()["ok"] is True
 
 
 def test_non_authoritative_run_stores_observations_without_advancing_absence() -> None:

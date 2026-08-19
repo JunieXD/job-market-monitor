@@ -56,8 +56,7 @@ class DataQualityChecker:
                 "invalid_daily_snapshot": self._invalid_daily_snapshot,
                 "successful_run_count_mismatch": self._successful_run_count_mismatch,
                 "invalid_baseline_snapshot": self._invalid_baseline_snapshot,
-                "version_without_location": self._version_without_location,
-                "job_without_current_location": self._job_without_current_location,
+                "current_location_set_mismatch": self._current_location_set_mismatch,
                 "job_hash_without_version": self._job_hash_without_version,
                 "category_source_mismatch": self._category_source_mismatch,
                 "legacy_category_link_missing": self._legacy_category_link_missing,
@@ -184,40 +183,52 @@ class DataQualityChecker:
         )
 
     @staticmethod
-    def _version_without_location(session: Session) -> int:
-        location_counts = (
+    def _current_location_set_mismatch(session: Session) -> int:
+        current_version_locations = (
             select(
-                JobVersionLocation.job_version_id,
-                func.count().label("location_count"),
+                JobVersion.job_id.label("job_id"),
+                JobVersionLocation.location_id.label("location_id"),
             )
-            .group_by(JobVersionLocation.job_version_id)
+            .join(
+                Job,
+                and_(
+                    Job.id == JobVersion.job_id,
+                    Job.content_hash == JobVersion.content_hash,
+                ),
+            )
+            .join(
+                JobVersionLocation,
+                JobVersionLocation.job_version_id == JobVersion.id,
+            )
             .subquery()
         )
-        statement = (
+        missing_from_current = session.scalar(
             select(func.count())
-            .select_from(JobVersion)
+            .select_from(current_version_locations)
             .outerjoin(
-                location_counts,
-                location_counts.c.job_version_id == JobVersion.id,
+                JobLocation,
+                and_(
+                    JobLocation.job_id == current_version_locations.c.job_id,
+                    JobLocation.location_id
+                    == current_version_locations.c.location_id,
+                ),
             )
-            .where(func.coalesce(location_counts.c.location_count, 0) == 0)
-        )
-        return session.scalar(statement) or 0
-
-    @staticmethod
-    def _job_without_current_location(session: Session) -> int:
-        location_counts = (
-            select(JobLocation.job_id, func.count().label("location_count"))
-            .group_by(JobLocation.job_id)
-            .subquery()
-        )
-        statement = (
+            .where(JobLocation.job_id.is_(None))
+        ) or 0
+        extra_in_current = session.scalar(
             select(func.count())
-            .select_from(Job)
-            .outerjoin(location_counts, location_counts.c.job_id == Job.id)
-            .where(func.coalesce(location_counts.c.location_count, 0) == 0)
-        )
-        return session.scalar(statement) or 0
+            .select_from(JobLocation)
+            .outerjoin(
+                current_version_locations,
+                and_(
+                    current_version_locations.c.job_id == JobLocation.job_id,
+                    current_version_locations.c.location_id
+                    == JobLocation.location_id,
+                ),
+            )
+            .where(current_version_locations.c.job_id.is_(None))
+        ) or 0
+        return missing_from_current + extra_in_current
 
     @staticmethod
     def _job_hash_without_version(session: Session) -> int:
