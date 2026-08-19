@@ -11,7 +11,7 @@ BENCHMARK_TIMEOUT_SECONDS=${BENCHMARK_TIMEOUT_SECONDS:-3600}
 BENCHMARK_PARALLEL=${BENCHMARK_PARALLEL:-1}
 BENCHMARK_OUTPUT_DIR=${BENCHMARK_OUTPUT_DIR:-/tmp/job-market-monitor-benchmark}
 BENCHMARK_RUN_ID=${BENCHMARK_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)}
-BENCHMARK_SOURCES=${BENCHMARK_SOURCES:-"bytedance:experienced jd:experienced netease:general alibaba:campus"}
+BENCHMARK_SOURCES=${BENCHMARK_SOURCES:-"bytedance:experienced jd:experienced netease:general ant:experienced"}
 
 log() {
   printf '[%s] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"
