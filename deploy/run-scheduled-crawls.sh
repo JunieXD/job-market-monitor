@@ -21,6 +21,7 @@ TEE_BIN=${TEE_BIN:-/usr/bin/tee}
 STAT_BIN=${STAT_BIN:-/usr/bin/stat}
 GZIP_BIN=${GZIP_BIN:-/usr/bin/gzip}
 FIND_BIN=${FIND_BIN:-/usr/bin/find}
+BATCH_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 
 log_event() {
   local event=$1
@@ -28,8 +29,8 @@ log_event() {
   detail=${detail//\/\\}
   detail=${detail//\"/\\\"}
   detail=${detail//$'\n'/\\n}
-  printf '{"time":"%s","event":"%s","detail":"%s"}\n' \
-    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$event" "$detail"
+  printf '{"time":"%s","batch_id":"%s","event":"%s","detail":"%s"}\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$BATCH_ID" "$event" "$detail"
 }
 
 prepare_log_output() {
