@@ -28,6 +28,21 @@ docker compose ps
 
 ## 每日调度
 
+虚拟机试运行使用包含本地 PostgreSQL 的 `compose.yaml`。安装 unit 后同时安装虚拟机 override，避免误用只连接外部数据库的生产 Compose：
+
+```bash
+sudo install -m 0755 deploy/run-scheduled-crawls.sh \
+  /opt/job-market-monitor/deploy/run-scheduled-crawls.sh
+sudo install -m 0644 deploy/systemd/job-market-crawl.service \
+  /etc/systemd/system/job-market-crawl.service
+sudo install -m 0644 deploy/systemd/job-market-crawl.timer \
+  /etc/systemd/system/job-market-crawl.timer
+sudo install -D -m 0644 deploy/systemd/job-market-crawl.vm.conf \
+  /etc/systemd/system/job-market-crawl.service.d/compose.conf
+sudo systemctl daemon-reload
+sudo systemctl enable --now job-market-crawl.timer
+```
+
 ```bash
 systemctl list-timers job-market-crawl.timer
 systemctl status job-market-crawl.timer --no-pager
