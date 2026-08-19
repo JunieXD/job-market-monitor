@@ -286,9 +286,8 @@ class TencentConnector:
             raise RuntimeError(f"Tencent detail {post_id} returned invalid JSON")
         return payload
 
-    @classmethod
     def _parse_detail_response(
-        cls,
+        self,
         payload: dict[str, Any],
         post_id: str,
     ) -> JobRecord | None:
@@ -301,7 +300,7 @@ class TencentConnector:
         if payload.get("status") != 0 or not isinstance(payload.get("data"), dict):
             message = json.dumps(payload, ensure_ascii=False)[:1000]
             raise RuntimeError(f"Invalid Tencent detail {post_id}: {message}")
-        record = cls.parse_job(payload["data"])
+        record = self.parse_job(payload["data"])
         if record.external_id != post_id:
             raise RuntimeError(
                 f"Tencent detail response mismatch: requested={post_id}, "
