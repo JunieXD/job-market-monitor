@@ -1,0 +1,36 @@
+{
+  "id": "fixture-001",
+  "code": "A-FIXTURE",
+  "title": "示例后端工程师",
+  "description": "负责服务端系统开发。",
+  "requirement": "本科及以上，熟悉 Python。",
+  "publish_time": 1760000000000,
+  "job_category": {
+    "id": "cat-backend",
+    "name": "后端",
+    "parent": {"id": "cat-rd", "name": "研发"}
+  },
+  "city_list": [
+    {"code": "CT_TEST", "name": "测试城"},
+    {"code": "CT_TEST_2", "name": "第二城市"}
+  ],
+  "recruit_type": {
+    "id": "101",
+    "name": "正式",
+    "parent": {"id": "1", "name": "社招"}
+  },
+  "job_hot_flag": null,
+  "job_post_info": {
+    "address_list": [
+      {
+        "name": "测试城示例地址",
+        "city": {"city_code": "CT_TEST", "name": "测试城"},
+        "state": {"state_code": "ST_TEST", "name": "测试省"},
+        "district": {"district_code": "DS_TEST", "name": "测试区"},
+        "country": {"country_code": "CN_TEST", "name": "中国"}
+      }
+    ]
+  },
+  "job_subject": null
+}
+

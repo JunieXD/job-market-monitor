@@ -1,0 +1,325 @@
+"""Meituan public recruitment portal connector.
+
+The portal's list cards already contain the responsibility and requirement
+texts.  This connector navigates its public social/campus pages and retains
+only the JSON responses that those pages issue themselves.
+"""
+
+import asyncio
+import json
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from typing import Any
+
+from playwright.async_api import Page, Response
+
+from job_market.config import Settings
+from job_market.connectors.browser_json import (
+    JsonResponseQueue,
+    drain_json_responses,
+    enqueue_json_response,
+    next_json_payload,
+)
+from job_market.raw_store import RawStore
+from job_market.schemas import (
+    CategoryAssignmentMethod,
+    Channel,
+    CollectionResult,
+    JobRecord,
+    LocationRecord,
+    RawSnapshotRecord,
+    SourceCategoryRecord,
+)
+
+RESPONSE_TIMEOUT_SECONDS = 30
+POSITION_LIST_URL = "https://zhaopin.meituan.com/web/{path}"
+
+
+@dataclass(frozen=True)
+class PortalConfig:
+    channel: Channel
+    path: str
+    employment_type_name: str
+
+    @property
+    def page_url(self) -> str:
+        return POSITION_LIST_URL.format(path=self.path)
+
+
+PORTALS = {
+    Channel.EXPERIENCED: PortalConfig(
+        channel=Channel.EXPERIENCED,
+        path="social",
+        employment_type_name="社会招聘",
+    ),
+    Channel.CAMPUS: PortalConfig(
+        channel=Channel.CAMPUS,
+        path="campus",
+        employment_type_name="校园招聘",
+    ),
+}
+
+
+class MeituanConnector:
+    """Collect public Meituan social and campus job-list responses."""
+
+    source_key = "meituan_cn"
+
+    def __init__(self, page: Page, settings: Settings, raw_store: RawStore | None = None):
+        self.page = page
+        self.settings = settings
+        self.raw_store = raw_store
+        self.snapshots: list[RawSnapshotRecord] = []
+        self.pages_fetched = 0
+        self._last_request_at = 0.0
+        self._position_responses: JsonResponseQueue = asyncio.Queue()
+        self.page.on("response", self._record_response)
+
+    async def collect(
+        self,
+        channel: Channel,
+        *,
+        max_pages: int | None = None,
+    ) -> CollectionResult:
+        portal = PORTALS.get(channel)
+        if portal is None:
+            raise ValueError("Meituan connector supports campus and experienced channels")
+
+        payload = await self._open_page(portal, 1)
+        page_data = self._position_page(payload, expected_page=1)
+        total_pages = page_data["total_pages"]
+        total_count = page_data["total_count"]
+        jobs_by_id: dict[str, JobRecord] = {}
+        complete = True
+
+        for page_number in range(1, total_pages + 1):
+            if max_pages is not None and self.pages_fetched >= max_pages:
+                complete = False
+                break
+
+            current = self._position_page(payload, expected_page=page_number)
+            self.pages_fetched += 1
+            self._save_payload(channel, page_number, payload)
+            for raw in current["rows"]:
+                record = self.parse_job(raw, portal)
+                previous = jobs_by_id.get(record.external_id)
+                if previous is not None and previous.content_hash() != record.content_hash():
+                    raise RuntimeError(
+                        "Meituan returned conflicting content for job "
+                        f"{record.external_id} across list pages"
+                    )
+                jobs_by_id[record.external_id] = record
+
+            if page_number < total_pages:
+                payload = await self._open_page(portal, page_number + 1)
+
+        if complete and len(jobs_by_id) != total_count:
+            raise RuntimeError(
+                "Meituan pagination count mismatch: "
+                f"declared={total_count}, unique={len(jobs_by_id)}"
+            )
+
+        return CollectionResult(
+            channel=channel,
+            jobs=list(jobs_by_id.values()),
+            snapshots=self.snapshots,
+            partition_counts={"all": total_count},
+            pages_fetched=self.pages_fetched,
+            complete=complete,
+        )
+
+    async def _open_page(self, portal: PortalConfig, page_number: int) -> dict[str, Any]:
+        await self._rate_limit()
+        drain_json_responses(self._position_responses)
+        await self.page.goto(
+            f"{portal.page_url}?pageNo={page_number}",
+            wait_until="domcontentloaded",
+            timeout=60_000,
+        )
+        payload = await next_json_payload(
+            self._position_responses,
+            timeout_seconds=RESPONSE_TIMEOUT_SECONDS,
+            operation=f"Meituan positions:{portal.channel.value}:{page_number}",
+        )
+        if payload.get("status") != 1 or not isinstance(payload.get("data"), dict):
+            message = json.dumps(payload, ensure_ascii=False)[:1000]
+            raise RuntimeError(f"Invalid Meituan position response: {message}")
+        self._last_request_at = asyncio.get_running_loop().time()
+        return payload
+
+    @staticmethod
+    def _position_page(payload: dict[str, Any], *, expected_page: int) -> dict[str, Any]:
+        data = payload.get("data")
+        if not isinstance(data, dict):
+            raise RuntimeError("Meituan response data is not an object")
+        rows = data.get("list")
+        pagination = data.get("page")
+        if not isinstance(rows, list) or not isinstance(pagination, dict):
+            raise RuntimeError("Meituan response has no list/page payload")
+        page_number = pagination.get("pageNo")
+        page_size = pagination.get("pageSize")
+        total_pages = pagination.get("totalPage")
+        total_count = pagination.get("totalCount")
+        if page_number != expected_page:
+            raise RuntimeError(
+                f"Meituan page mismatch: expected={expected_page}, got={page_number!r}"
+            )
+        if not isinstance(page_size, int) or page_size < 1:
+            raise RuntimeError(f"Meituan returned invalid page size: {page_size!r}")
+        if not isinstance(total_pages, int) or total_pages < 0:
+            raise RuntimeError(f"Meituan returned invalid total pages: {total_pages!r}")
+        if not isinstance(total_count, int) or total_count < 0:
+            raise RuntimeError(f"Meituan returned invalid total count: {total_count!r}")
+        expected_total_pages = (total_count + page_size - 1) // page_size
+        if total_pages != expected_total_pages:
+            raise RuntimeError(
+                "Meituan pagination metadata is inconsistent: "
+                f"pages={total_pages}, total={total_count}, size={page_size}"
+            )
+        if total_count and not rows:
+            raise RuntimeError(f"Meituan returned empty non-terminal page {expected_page}")
+        return {
+            "rows": rows,
+            "page_size": page_size,
+            "total_pages": total_pages,
+            "total_count": total_count,
+        }
+
+    def _record_response(self, response: Response) -> None:
+        if response.status == 200 and "/api/official/job/getJobList" in response.url:
+            enqueue_json_response(self._position_responses, response)
+
+    async def _rate_limit(self) -> None:
+        delay = self.settings.meituan_request_delay_seconds - (
+            asyncio.get_running_loop().time() - self._last_request_at
+        )
+        if delay > 0:
+            await asyncio.sleep(delay)
+
+    def _save_payload(self, channel: Channel, page_number: int, payload: dict[str, Any]) -> None:
+        if self.raw_store is not None:
+            self.snapshots.append(
+                self.raw_store.save(
+                    channel=channel,
+                    partition="all",
+                    offset=page_number - 1,
+                    payload=payload,
+                )
+            )
+
+    @staticmethod
+    def parse_job(raw: dict[str, Any], portal: PortalConfig) -> JobRecord:
+        external_id = _required_string(raw, "jobUnionId", "Meituan job id")
+        title = _required_string(raw, "name", f"Meituan job title ({external_id})")
+        description = _required_string(raw, "jobDuty", f"Meituan job duty ({external_id})")
+        requirements = _required_string(
+            raw,
+            "jobRequirement",
+            f"Meituan job requirement ({external_id})",
+        )
+        employment_type_id = _required_string(raw, "jobType", f"Meituan job type ({external_id})")
+        locations = _locations(raw.get("cityList"), external_id)
+        categories = _categories(raw)
+        department_code, department_name = _first_named_value(raw.get("department"))
+
+        return JobRecord(
+            source_key="meituan_cn",
+            external_id=external_id,
+            source_url=f"{portal.page_url}?jobUnionId={external_id}",
+            company_name="美团",
+            channel=portal.channel,
+            employment_type_id=employment_type_id,
+            employment_type_name=portal.employment_type_name,
+            recruitment_project_id=_optional_string(raw.get("projectId")),
+            recruitment_project_name=_optional_string(raw.get("projectName")),
+            title=title,
+            description=description,
+            requirements=requirements,
+            published_at=_timestamp_ms(raw.get("firstPostTime"), "firstPostTime"),
+            source_updated_at=_timestamp_ms(raw.get("refreshTime"), "refreshTime"),
+            source_status=_optional_string(raw.get("jobStatus")),
+            department_code=department_code,
+            department_name=department_name,
+            locations=locations,
+            categories=categories,
+            source_payload=raw,
+        )
+
+
+def _required_string(raw: dict[str, Any], key: str, label: str) -> str:
+    value = _optional_string(raw.get(key))
+    if value is None:
+        raise ValueError(f"{label} is missing")
+    return value
+
+
+def _optional_string(value: Any) -> str | None:
+    if value is None:
+        return None
+    normalized = str(value).strip()
+    return normalized or None
+
+
+def _timestamp_ms(value: Any, field: str) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"Meituan {field} is not a numeric timestamp: {value!r}")
+    return datetime.fromtimestamp(value / 1000, tz=UTC)
+
+
+def _locations(value: Any, external_id: str) -> list[LocationRecord]:
+    if not isinstance(value, list):
+        raise ValueError(f"Meituan job has no city list: {external_id}")
+    locations: list[LocationRecord] = []
+    seen: set[str] = set()
+    for item in value:
+        if not isinstance(item, dict):
+            raise ValueError(f"Meituan city item is not an object: {external_id}")
+        name = _optional_string(item.get("name"))
+        if name is None:
+            continue
+        code = _optional_string(item.get("code")) or f"city:{name}"
+        if code in seen:
+            continue
+        seen.add(code)
+        locations.append(LocationRecord(code=code, name=name))
+    if not locations:
+        raise ValueError(f"Meituan job has no work location: {external_id}")
+    return locations
+
+
+def _categories(raw: dict[str, Any]) -> list[SourceCategoryRecord]:
+    family = _optional_string(raw.get("jobFamily"))
+    group = _optional_string(raw.get("jobFamilyGroup"))
+    if group is not None and family is not None:
+        return [
+            SourceCategoryRecord(
+                external_id=f"jobFamilyGroup:{family}:{group}",
+                name=group,
+                parent_external_id=f"jobFamily:{family}",
+                parent_name=family,
+                assignment_method=CategoryAssignmentMethod.DIRECT_FIELD,
+            )
+        ]
+    if family is not None:
+        return [
+            SourceCategoryRecord(
+                external_id=f"jobFamily:{family}",
+                name=family,
+                assignment_method=CategoryAssignmentMethod.DIRECT_FIELD,
+            )
+        ]
+    return []
+
+
+def _first_named_value(value: Any) -> tuple[str | None, str | None]:
+    if not isinstance(value, list):
+        return None, None
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        name = _optional_string(item.get("name"))
+        if name is not None:
+            return _optional_string(item.get("code")), name
+    return None, None

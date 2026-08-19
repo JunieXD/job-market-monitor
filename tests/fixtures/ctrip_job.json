@@ -1,0 +1,20 @@
+{
+  "buCode": "47",
+  "buName": "住宿业务",
+  "category": "1",
+  "city": "CO0009",
+  "cityName": "测试城",
+  "duty": null,
+  "fromId": "MJ-SYNTHETIC-001",
+  "id": "29524093",
+  "jobFamilyGroupCode": "JFG_33",
+  "jobFamilyGroupName": "AI & BI",
+  "jobId": "synthetic-uuid",
+  "jobTitle": "示例Agent研发工程师(MJ-SYNTHETIC-001)",
+  "publishDate": "2026-08-18",
+  "requirements": "职位描述\n<p>负责示例Agent平台的研发。</p>\n任职资格\n<p>本科及以上学历，具备工程实践能力。</p>",
+  "kind": "1",
+  "kindName": "",
+  "nextWeekDays": [],
+  "channelId": "1,1,1"
+}

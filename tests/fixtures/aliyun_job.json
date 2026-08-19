@@ -1,0 +1,20 @@
+{
+  "id": "synthetic-aliyun-001",
+  "code": "GP-SYNTHETIC-001",
+  "name": "合成云平台研发工程师",
+  "positionUrl": "/off-campus/position-detail?positionId=synthetic-aliyun-001&track_id=discard-me",
+  "status": "OPEN",
+  "categories": null,
+  "categoryName": "技术类",
+  "categoryType": "130",
+  "publishTime": 1786982400000,
+  "modifyTime": 1786986000000,
+  "workLocations": ["杭州", "上海"],
+  "interviewLocations": ["杭州"],
+  "requirement": "具备扎实的软件工程能力。",
+  "description": "负责合成云平台研发。",
+  "experience": {"from": 3, "to": 5},
+  "degree": "bachelor",
+  "department": "云智能集团",
+  "graduationTime": null
+}

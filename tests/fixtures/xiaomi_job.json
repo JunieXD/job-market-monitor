@@ -1,0 +1,14 @@
+{
+  "id": 5001,
+  "title": "示例算法工程师",
+  "cityZhNames": ["测试城", "第二城市"],
+  "levelOneDeptName": "示例部门",
+  "description": "负责示例算法能力建设。",
+  "requirement": "具备算法与工程基础。",
+  "publishTime": "2026-04-13",
+  "larkJobCode": "MI-FIXTURE-001",
+  "type": 1,
+  "url": "https://xiaomi.jobs.f.mioffice.cn/index/position/fixture/detail",
+  "jobId": "xiaomi-job-fixture",
+  "jobPostId": "xiaomi-post-fixture"
+}

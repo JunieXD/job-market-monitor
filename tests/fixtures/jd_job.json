@@ -1,0 +1,18 @@
+{
+  "id": 1001,
+  "requirementId": 2001,
+  "positionId": 3001,
+  "positionCode": "JD-FIXTURE-001",
+  "positionName": "示例研发岗位",
+  "positionNameOpen": "示例研发工程师",
+  "jobType": "研发类",
+  "jobTypeCode": "YANFA",
+  "positionDeptCode": "business-example",
+  "positionDeptName": "示例业务",
+  "workCityCode": "city-a",
+  "workCity": "测试城",
+  "publishTime": 1750000000000,
+  "isHot": 1,
+  "workContent": "负责示例系统的研发与维护。",
+  "qualification": "具备扎实的计算机基础。"
+}

@@ -1,0 +1,20 @@
+{
+  "id": "taotian-fixture-001",
+  "name": "示例智能产品经理",
+  "description": "负责虚构知识平台的产品建设。",
+  "requirement": "具备示例产品设计经验。",
+  "code": "GP-FIXTURE-001",
+  "positionUrl": "/off-campus/position-detail?positionId=taotian-fixture-001&track_id=dynamic-test",
+  "publishTime": 1750000000000,
+  "modifyTime": 1760000000000,
+  "status": "recruit",
+  "workLocations": ["测试城", "第二城市", "测试城"],
+  "interviewLocations": [],
+  "degree": "bachelor",
+  "experience": {"from": 3, "to": 5},
+  "graduationTime": null,
+  "department": "示例产品事业部",
+  "categories": null,
+  "categoryName": null,
+  "categoryType": null
+}

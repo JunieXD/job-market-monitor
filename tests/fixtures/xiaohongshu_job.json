@@ -1,0 +1,14 @@
+{
+  "positionId": 999001,
+  "positionName": "合成Agent研发工程师",
+  "amountInNeed": 3,
+  "workplaceIds": "1100,3100",
+  "workplace": "北京市，上海市",
+  "publishTime": "2026-08-18",
+  "recruitStatus": "in_recruitment",
+  "duty": "负责合成智能体平台研发。",
+  "qualification": "具备扎实的软件工程能力。",
+  "jobType": "后端开发",
+  "jobProjectName": "",
+  "labels": null
+}

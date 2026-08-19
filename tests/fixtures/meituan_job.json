@@ -1,0 +1,21 @@
+{
+  "jobUnionId": "meituan-fixture-001",
+  "name": "示例平台研发工程师",
+  "projectId": "project-example",
+  "projectName": "示例招聘项目",
+  "jobType": "3",
+  "jobStatus": "000",
+  "jobFamily": "技术类",
+  "jobFamilyGroup": "软件",
+  "cityList": [
+    {"code": "city-a", "name": "测试城"},
+    {"code": null, "name": "第二城市"}
+  ],
+  "department": [
+    {"code": "department-example", "name": "示例研发部门"}
+  ],
+  "jobDuty": "负责示例平台的设计与研发。",
+  "jobRequirement": "具备良好的工程实践能力。",
+  "firstPostTime": 1750000000000,
+  "refreshTime": 1760000000000
+}

@@ -1,0 +1,12 @@
+[Unit]
+Description=Run Job Market Monitor every day
+
+[Timer]
+OnCalendar=*-*-* 03:15:00 Asia/Shanghai
+Persistent=true
+RandomizedDelaySec=300
+AccuracySec=1m
+Unit=job-market-crawl.service
+
+[Install]
+WantedBy=timers.target

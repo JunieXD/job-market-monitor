@@ -1,0 +1,35 @@
+{
+  "detail": {
+    "batchId": "synthetic-batch-001",
+    "bonus": "有开源项目经验者优先。",
+    "graduationYear": "2027",
+    "id": "synthetic-pdd-001",
+    "job": "technology",
+    "jobDuty": "负责示例系统的设计、开发和稳定性建设。",
+    "jobName": "技术",
+    "name": "示例研发工程师",
+    "normal": true,
+    "recruitType": "headquarters",
+    "recruitTypeName": "技术专场",
+    "releaseTime": 1783256970000,
+    "serveRequirement": "具备扎实的编程基础和工程实践能力。",
+    "voteArrange": "inTime",
+    "workLocationName": "测试城"
+  },
+  "list": {
+    "code": "SYNTHETIC001",
+    "graduationYear": "2027",
+    "id": "synthetic-pdd-001",
+    "job": "technology",
+    "jobDuty": "负责示例系统的设计、开发和稳定性建设。",
+    "jobName": "技术",
+    "labelList": [
+      "紧缺"
+    ],
+    "name": "示例研发工程师",
+    "recruitTypeName": "技术专场",
+    "releaseTime": 1783256970000,
+    "workLocation": "synthetic-city",
+    "workLocationName": "测试城"
+  }
+}

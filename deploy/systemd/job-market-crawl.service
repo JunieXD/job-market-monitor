@@ -1,0 +1,16 @@
+[Unit]
+Description=Job Market Monitor daily crawl
+After=docker.service network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/job-market-monitor
+Environment=SOURCE_TIMEOUT_SECONDS=10800
+Environment=MAX_ATTEMPTS=2
+Environment=RETRY_DELAY_SECONDS=60
+Environment=INTER_SOURCE_DELAY_SECONDS=10
+ExecStart=/opt/job-market-monitor/deploy/run-scheduled-crawls.sh
+TimeoutStartSec=23h
+TimeoutStopSec=2m
+KillMode=control-group

@@ -1,0 +1,33 @@
+{
+  "batchId": null,
+  "batchName": null,
+  "bucket": "DEFAULT",
+  "categories": [
+    "技术类-开发"
+  ],
+  "code": "SYNTHETIC-ANT-001",
+  "degree": "bachelor",
+  "department": "示例事业部",
+  "departmentPath": "root/synthetic-unit",
+  "description": "负责示例平台的设计与研发。",
+  "experience": {
+    "from": 3,
+    "to": 5
+  },
+  "id": 900001,
+  "interviewLocations": [
+    "远程面试"
+  ],
+  "name": "示例平台研发工程师",
+  "positionUrl": "",
+  "publishTime": "2026-08-18T12:49:19.000+00:00",
+  "requirement": "具备扎实的工程基础。",
+  "tags": [
+    "NEW"
+  ],
+  "workLocations": [
+    "测试城",
+    "第二城市"
+  ],
+  "workLocationsCodes": null
+}

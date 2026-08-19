@@ -1,0 +1,23 @@
+{
+  "id": "ali-fixture-001",
+  "name": "示例平台研发工程师",
+  "description": "负责虚构示例平台的工程建设。",
+  "requirement": "具备示例系统开发基础。",
+  "code": null,
+  "publishTime": null,
+  "modifyTime": 1760000000000,
+  "graduationTime": {"from": 1750000000000, "to": 1760000000000},
+  "interviewLocations": ["远程", "测试城", "远程"],
+  "degree": null,
+  "experience": null,
+  "department": null,
+  "status": "recruit",
+  "categoryName": "技术类",
+  "categoryType": "freshman",
+  "batchId": 100000000001,
+  "batchName": "示例届应届生项目",
+  "positionUrl": null,
+  "workLocations": ["测试城", "第二城市", "测试城"],
+  "circleCodeList": ["example-group"],
+  "circleNames": ["示例业务集团"]
+}

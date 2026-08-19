@@ -1,0 +1,17 @@
+{
+  "id": 4001,
+  "name": "示例产品实习生",
+  "workType": "1",
+  "firstPostTypeName": "产品",
+  "recruitNum": 2,
+  "description": "参与示例产品的设计与迭代。",
+  "requirement": "对产品工作有兴趣并具备分析能力。",
+  "reqEducationName": "本科",
+  "reqWorkYearsName": "0-3年",
+  "firstDepName": "示例事业部",
+  "workPlaceList": [101, 102],
+  "workPlaceNameList": ["测试城", "第二城市"],
+  "updateTime": 1760000000000,
+  "product": "P-EXAMPLE",
+  "productName": "示例产品"
+}

@@ -1,0 +1,19 @@
+{
+  "Id": "synthetic-beike-001",
+  "JobAdId": 100001,
+  "PostDateInt": 1786982400000,
+  "PostDate": "2026-08-18T00:00:00",
+  "JobAdName": "合成数据工程师(J00001)",
+  "OrgId": 200001,
+  "Org": "数据治理单元",
+  "Category": "社会招聘",
+  "CategoryId": "1",
+  "LocNames": ["北京市"],
+  "Duty": "负责合成数据平台建设。",
+  "Require": "具备工程实践能力。",
+  "Status": 1,
+  "Degree": "本科及以上",
+  "YearsOfWorking": "3年",
+  "ChangeDate": "2026-08-18T12:30:00",
+  "Channel4IsHot": false
+}

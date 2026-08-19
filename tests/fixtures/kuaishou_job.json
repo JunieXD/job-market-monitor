@@ -1,0 +1,23 @@
+{
+  "id": 900001,
+  "code": "KS-FIXTURE-001",
+  "name": "示例后端工程师",
+  "recruitProjectCode": "socialr",
+  "positionNatureCode": "C001",
+  "departmentCode": "department-example",
+  "departmentName": "示例研发部门",
+  "positionCategoryCode": "B009",
+  "workLocationCode": "Beijing",
+  "workLocationsCode": ["Beijing", "Shanghai"],
+  "workExperienceCode": "5",
+  "educationLimitCode": "bachelor",
+  "description": "负责示例系统的设计与开发。",
+  "positionDemand": "具备扎实的工程基础。",
+  "releaseTime": "2026-04-13T09:30:00.000+08:00",
+  "updateTime": "2026-04-16T18:20:00.000+08:00",
+  "positionStatusCode": "online",
+  "recruitNumber": 3,
+  "ifRecruitWebsiteHot": true,
+  "levels": ["E8", "E9"],
+  "channelCode": "official"
+}

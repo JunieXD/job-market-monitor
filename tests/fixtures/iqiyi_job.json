@@ -1,0 +1,28 @@
+{
+  "id": "synthetic-iqiyi-001",
+  "title": "合成Agent研发工程师",
+  "description": "负责合成智能体平台研发。",
+  "requirement": "具备扎实的软件工程能力。",
+  "recruit_type": {
+    "id": "202",
+    "name": "实习",
+    "parent": {"id": "2", "name": "校招"}
+  },
+  "publish_time": 1786982400000,
+  "job_hot_flag": true,
+  "job_subject": {
+    "id": "project-1",
+    "name": {"zh_cn": "日常实习生招聘", "i18n": "日常实习生招聘"}
+  },
+  "code": "A999001",
+  "job_function": {
+    "id": "function-child",
+    "name": "研发",
+    "parent": {"id": "function-root", "name": "技术"}
+  },
+  "city_list": [
+    {"code": "CT_11", "name": "北京"},
+    {"code": "CT_125", "name": "上海"}
+  ],
+  "job_post_info": {"address_list": []}
+}

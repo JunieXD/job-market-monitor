@@ -1,0 +1,37 @@
+{
+  "job_id": "synthetic-vivo-001",
+  "job_code": "SYN001",
+  "job_title": "合成Agent研发工程师",
+  "requirement_org_name": "合成研发部",
+  "degree_range_code": "BACHELOR_ABOVE",
+  "degree_range_name": "本科",
+  "yoe_min": 5,
+  "yoe_max": -1,
+  "job_location_list": [
+    {
+      "id": "location-1",
+      "address_id": "address-1",
+      "city": "测试城",
+      "city_code": "TEST_CITY",
+      "location": "测试城研发中心",
+      "location_no": "1001"
+    },
+    {
+      "id": "location-2",
+      "address_id": "address-2",
+      "city": "第二城市",
+      "city_code": "SECOND_CITY",
+      "location": "第二城市研发中心",
+      "location_no": "2001"
+    }
+  ],
+  "head_count": 2,
+  "fuzzy_head_count": 0,
+  "job_desc": "岗位职责与要求的官网合并正文。",
+  "job_category_id": "category-child",
+  "job_category": "研发类",
+  "hot": true,
+  "collect_flag": false,
+  "forward": true,
+  "publish_timestamp": 1786982400000
+}

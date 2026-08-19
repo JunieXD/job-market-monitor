@@ -1,0 +1,25 @@
+.DS_Store
+.env
+.idea/
+.vscode/
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
+
+# Runtime data must never be committed.
+/runtime/
+/data/
+/backups/
+*.backup
+*.dump
+*.sql
+*.sqlite3
+*.json.gz
+*.html.gz
