@@ -43,6 +43,15 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now job-market-crawl.timer
 ```
 
+若 `/opt/job-market-monitor` 是需要保留的试验工作副本，可将发布提交克隆到
+`/opt/job-market-monitor-release`，再安装发布目录 override：
+
+```bash
+sudo install -m 0644 deploy/systemd/job-market-crawl.release.conf \
+  /etc/systemd/system/job-market-crawl.service.d/release.conf
+sudo systemctl daemon-reload
+```
+
 ```bash
 systemctl list-timers job-market-crawl.timer
 systemctl status job-market-crawl.timer --no-pager
