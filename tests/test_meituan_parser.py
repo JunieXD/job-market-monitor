@@ -36,9 +36,40 @@ def test_meituan_rejects_inconsistent_pagination_metadata() -> None:
     payload = {
         "data": {
             "list": [{}],
-            "page": {"pageNo": 1, "pageSize": 10, "totalPage": 2, "totalCount": 1},
+            "page": {"pageNo": 1, "pageSize": 200, "totalPage": 2, "totalCount": 1},
         }
     }
 
     with pytest.raises(RuntimeError, match="inconsistent"):
+        MeituanConnector._position_page(payload, expected_page=1)
+
+
+def test_meituan_validates_large_final_page_shape() -> None:
+    payload = {
+        "data": {
+            "list": [{}] * 157,
+            "page": {
+                "pageNo": 3,
+                "pageSize": 200,
+                "totalPage": 3,
+                "totalCount": 557,
+            },
+        }
+    }
+
+    page = MeituanConnector._position_page(payload, expected_page=3)
+
+    assert page["total_count"] == 557
+    assert len(page["rows"]) == 157
+
+
+def test_meituan_rejects_unexpected_page_size() -> None:
+    payload = {
+        "data": {
+            "list": [{}] * 10,
+            "page": {"pageNo": 1, "pageSize": 10, "totalPage": 1, "totalCount": 10},
+        }
+    }
+
+    with pytest.raises(RuntimeError, match="page size changed"):
         MeituanConnector._position_page(payload, expected_page=1)

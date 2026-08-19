@@ -78,7 +78,7 @@ class NetEaseConnector:
 
     async def _open_first_page(self) -> dict[str, Any]:
         await self.page.goto(
-            POSITION_LIST_URL,
+            POSITION_API_URL,
             wait_until="domcontentloaded",
             timeout=60_000,
         )
