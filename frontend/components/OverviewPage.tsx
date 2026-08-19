@@ -2,9 +2,10 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { EChartsOption } from "echarts";
-import { BriefcaseBusiness, Building2, ShieldCheck, TrendingDown, TrendingUp } from "lucide-react";
+import { BriefcaseBusiness, ShieldCheck, TrendingDown, TrendingUp } from "lucide-react";
 
 import { Chart } from "@/components/Chart";
+import { CompanyName } from "@/components/CompanyLogo";
 import { Pagination } from "@/components/Pagination";
 import { SelectField } from "@/components/SelectField";
 import { ChannelTag, CoverageNotice, EmptyState, ErrorNotice, LoadingBlock, MetricCard, PageHeader, Panel, RefreshButton, TableWrap } from "@/components/ui";
@@ -89,7 +90,7 @@ export function OverviewPage() {
 function CompanyCoverageTable({ rows }: { rows: CompanyRow[] }) {
   return (
     <TableWrap><table className="compact-table fit-table overview-table"><thead><tr><th>公司</th><th>招聘类型</th><th>岗位</th></tr></thead><tbody>
-      {rows.map((row) => <tr key={`${row.source_id}-${row.channel}`}><td><span className="company-name"><Building2 size={14} />{row.company_name}</span></td><td><ChannelTag channel={row.channel} /></td><td className="numeric">{formatNumber(row.active_posting_count)}</td></tr>)}
+      {rows.map((row) => <tr key={`${row.source_id}-${row.channel}`}><td><CompanyName companyKey={row.company_key} companyName={row.company_name} /></td><td><ChannelTag channel={row.channel} /></td><td className="numeric">{formatNumber(row.active_posting_count)}</td></tr>)}
     </tbody></table></TableWrap>
   );
 }

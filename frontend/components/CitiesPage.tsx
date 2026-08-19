@@ -45,7 +45,7 @@ export function CitiesPage() {
   }, [channel, companyKeys]);
   useEffect(() => { void load(); }, [load]);
   const rows = useMemo(() => groupCities(result?.data ?? []), [result?.data]);
-  const companyOptions = useMemo(() => companies.map((item) => ({ value: item.key, label: item.name })), [companies]);
+  const companyOptions = useMemo(() => companies.map((item) => ({ value: item.key, label: item.name, companyKey: item.key })), [companies]);
   const chart = useMemo(() => cityOption(rows), [rows]);
   const pageCount = Math.max(1, Math.ceil(rows.length / pageSize));
   const currentPage = Math.min(page, pageCount);

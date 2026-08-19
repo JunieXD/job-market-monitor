@@ -407,6 +407,43 @@ def test_observation_points_to_exact_version_when_content_reverts() -> None:
         ]
 
 
+def test_daily_observations_reuse_content_until_description_changes() -> None:
+    repository, clock = make_repository()
+    source_id = repository.ensure_source()
+    original = make_job()
+
+    first_run = repository.start_run(source_id, Channel.CAMPUS.value)
+    repository.ingest(first_run, result([original]))
+
+    clock.next_day()
+    unchanged_run = repository.start_run(source_id, Channel.CAMPUS.value)
+    unchanged_stats = repository.ingest(unchanged_run, result([original]))
+
+    clock.next_day()
+    changed = original.model_copy(update={"description": "官网修改后的职位描述"})
+    changed_run = repository.start_run(source_id, Channel.CAMPUS.value)
+    changed_stats = repository.ingest(changed_run, result([changed]))
+
+    with Session(repository.engine) as session:
+        versions = session.scalars(
+            select(JobVersion).order_by(JobVersion.id)
+        ).all()
+        observations = session.scalars(
+            select(JobObservation).order_by(JobObservation.id)
+        ).all()
+        assert unchanged_stats["changed"] == 0
+        assert changed_stats["changed"] == 1
+        assert len(versions) == 2
+        assert len(observations) == 3
+        assert [item.job_version_id for item in observations] == [
+            versions[0].id,
+            versions[0].id,
+            versions[1].id,
+        ]
+        assert versions[0].payload["description"] == "直接来源的职位描述"
+        assert versions[1].payload["description"] == "官网修改后的职位描述"
+
+
 def test_changed_source_location_is_remapped_without_overwriting_history() -> None:
     repository, clock = make_repository()
     source_id = repository.ensure_source()

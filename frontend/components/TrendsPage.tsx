@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { EChartsOption } from "echarts";
 
 import { Chart } from "@/components/Chart";
+import { CompanyName } from "@/components/CompanyLogo";
 import { Pagination } from "@/components/Pagination";
 import { SelectField } from "@/components/SelectField";
 import { ChannelTag, CoverageNotice, EmptyState, ErrorNotice, LoadingBlock, PageHeader, Panel, RefreshButton, TableWrap } from "@/components/ui";
@@ -45,7 +46,7 @@ export function TrendsPage() {
         {loading && !result ? <LoadingBlock /> : rows.length ? <Chart option={companyOption} ariaLabel="各公司岗位规模趋势" className="chart-tall" /> : <EmptyState title="暂无趋势数据" />}
       </Panel>
       <Panel title="每日变化明细" className="section-gap">
-        {loading && !result ? <LoadingBlock /> : dailyRows.length ? <><TableWrap><table className="fit-table trend-table"><thead><tr><th>日期</th><th>公司</th><th>招聘类型</th><th>在招岗位</th><th>新增</th><th>内容变化</th><th>关闭</th></tr></thead><tbody>{visibleRows.map((row) => <tr key={`${row.snapshot_date}-${row.source_id}-${row.channel}`}><td>{row.snapshot_date}</td><td>{row.company_name}</td><td><ChannelTag channel={row.channel} /></td><td>{formatNumber(row.active_posting_count)}</td><td className="positive">+{formatNumber(row.new_posting_count)}</td><td>{formatNumber(row.changed_posting_count)}</td><td className="negative">-{formatNumber(row.closed_posting_count)}</td></tr>)}</tbody></table></TableWrap><Pagination total={dailyRows.length} page={currentPage} pageSize={pageSize} onPageChange={setPage} onPageSizeChange={(size) => { setPageSize(size); setPage(1); }} itemLabel="条变化记录" /></> : <EmptyState title="暂无每日变化记录" />}
+        {loading && !result ? <LoadingBlock /> : dailyRows.length ? <><TableWrap><table className="fit-table trend-table"><thead><tr><th>日期</th><th>公司</th><th>招聘类型</th><th>在招岗位</th><th>新增</th><th>内容变化</th><th>关闭</th></tr></thead><tbody>{visibleRows.map((row) => <tr key={`${row.snapshot_date}-${row.source_id}-${row.channel}`}><td>{row.snapshot_date}</td><td><CompanyName companyKey={row.company_key} companyName={row.company_name} /></td><td><ChannelTag channel={row.channel} /></td><td>{formatNumber(row.active_posting_count)}</td><td className="positive">+{formatNumber(row.new_posting_count)}</td><td>{formatNumber(row.changed_posting_count)}</td><td className="negative">-{formatNumber(row.closed_posting_count)}</td></tr>)}</tbody></table></TableWrap><Pagination total={dailyRows.length} page={currentPage} pageSize={pageSize} onPageChange={setPage} onPageSizeChange={(size) => { setPageSize(size); setPage(1); }} itemLabel="条变化记录" /></> : <EmptyState title="暂无每日变化记录" />}
       </Panel>
     </>
   );

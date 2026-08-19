@@ -73,6 +73,42 @@ export type JobRow = {
   last_seen_at: string;
 };
 
+export type JobDetail = JobRow & {
+  source_name: string;
+  employment_type_name: string;
+  recruitment_project_name: string | null;
+  description: string | null;
+  requirements: string | null;
+  source_status: string | null;
+  degree_code: string | null;
+  degree_name: string | null;
+  experience_min_years: number | null;
+  experience_max_years: number | null;
+  graduation_start_at: string | null;
+  graduation_end_at: string | null;
+  department_code: string | null;
+  department_name: string | null;
+  interview_location_names: string[];
+  last_changed_at: string;
+  closed_at: string | null;
+  locations: Array<{
+    code: string;
+    name: string;
+    country_name: string | null;
+    state_name: string | null;
+    district_name: string | null;
+    address: string | null;
+  }>;
+  categories: Array<{
+    external_id: string;
+    name: string;
+    parent_name: string | null;
+    assignment_method: string;
+  }>;
+  business_units: Array<{ code: string; name: string }>;
+  version_count: number;
+};
+
 export type CompanyMeta = {
   key: string;
   name: string;

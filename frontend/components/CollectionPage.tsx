@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { CheckCircle2, Clock3, DatabaseZap, LoaderCircle, TriangleAlert } from "lucide-react";
 
+import { CompanyName } from "@/components/CompanyLogo";
 import { MultiSelectFilter } from "@/components/MultiSelectFilter";
 import { Pagination } from "@/components/Pagination";
 import { SearchField } from "@/components/SearchField";
@@ -59,7 +60,7 @@ export function CollectionPage() {
   const summary = data?.summary;
   const scheduleText = data ? `每天 ${String(data.schedule.hour).padStart(2, "0")}:${String(data.schedule.minute).padStart(2, "0")} 自动采集` : "每天自动采集";
   const sorted = useMemo(() => data?.channels ?? [], [data?.channels]);
-  const companyOptions = useMemo(() => [...new Map(sorted.map((row) => [row.company_key, { value: row.company_key, label: row.company_name }])).values()], [sorted]);
+  const companyOptions = useMemo(() => [...new Map(sorted.map((row) => [row.company_key, { value: row.company_key, label: row.company_name, companyKey: row.company_key }])).values()], [sorted]);
   const filtered = useMemo(() => sorted.filter((row) => {
     if (companies !== null && !companies.includes(row.company_key)) return false;
     if (channels !== null && !channels.includes(row.channel)) return false;
@@ -90,7 +91,7 @@ export function CollectionPage() {
       </div>
       <Panel title="招聘网站采集进度">
         <div className="progress-track" aria-label={`今日采集完成 ${formatPercent(summary?.progress_ratio)}`}><span style={{ width: `${Math.round((summary?.progress_ratio ?? 0) * 100)}%` }} /></div>
-        {loading && !data ? <LoadingBlock /> : visibleRows.length ? <><TableWrap><table className="fit-table collection-table"><thead><tr><th>公司与招聘网站</th><th>招聘类型</th><th>状态</th><th>采集开始</th><th>已发现岗位</th><th>已抓页面</th><th>数据更新至</th></tr></thead><tbody>{visibleRows.map((row) => <tr key={`${row.source_key}-${row.channel}`}><td><strong>{row.company_name}</strong><span className="cell-note">{row.display_name}</span></td><td><ChannelTag channel={row.channel} /></td><td><span className={`status-badge ${row.state}`}>{row.state === "running" && <LoaderCircle size={13} className="spin" />}{collectionStateLabel(row.state)}</span></td><td>{formatDateTime(row.started_at)}</td><td>{progressValue(row.state, row.discovered_count, "统计中")}</td><td>{progressValue(row.state, row.page_count, "准备中")}</td><td>{row.last_standard_date ?? "-"}</td></tr>)}</tbody></table></TableWrap><Pagination total={filtered.length} page={currentPage} pageSize={pageSize} onPageChange={setPage} onPageSizeChange={(size) => { setPageSize(size); setPage(1); }} itemLabel="个招聘渠道" /></> : <EmptyState title={sorted.length ? "没有符合条件的招聘渠道" : "暂无采集来源"} detail={sorted.length ? "请调整筛选条件。" : undefined} />}
+        {loading && !data ? <LoadingBlock /> : visibleRows.length ? <><TableWrap><table className="fit-table collection-table"><thead><tr><th>公司与招聘网站</th><th>招聘类型</th><th>状态</th><th>采集开始</th><th>已发现岗位</th><th>已抓页面</th><th>数据更新至</th></tr></thead><tbody>{visibleRows.map((row) => <tr key={`${row.source_key}-${row.channel}`}><td><CompanyName companyKey={row.company_key} companyName={row.company_name} /><span className="cell-note">{row.display_name}</span></td><td><ChannelTag channel={row.channel} /></td><td><span className={`status-badge ${row.state}`}>{row.state === "running" && <LoaderCircle size={13} className="spin" />}{collectionStateLabel(row.state)}</span></td><td>{formatDateTime(row.started_at)}</td><td>{progressValue(row.state, row.discovered_count, "统计中")}</td><td>{progressValue(row.state, row.page_count, "准备中")}</td><td>{row.last_standard_date ?? "-"}</td></tr>)}</tbody></table></TableWrap><Pagination total={filtered.length} page={currentPage} pageSize={pageSize} onPageChange={setPage} onPageSizeChange={(size) => { setPageSize(size); setPage(1); }} itemLabel="个招聘渠道" /></> : <EmptyState title={sorted.length ? "没有符合条件的招聘渠道" : "暂无采集来源"} detail={sorted.length ? "请调整筛选条件。" : undefined} />}
       </Panel>
     </>
   );

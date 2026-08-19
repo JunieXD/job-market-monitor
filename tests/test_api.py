@@ -133,7 +133,21 @@ def test_api_exposes_health_overview_and_read_only_job_queries() -> None:
 
         detail = client.get("/api/v1/jobs/bytedance_cn/api-job-1")
         assert detail.status_code == 200
-        assert detail.json()["requirements"] == "熟悉 Python"
+        detail_body = detail.json()
+        assert detail_body["requirements"] == "熟悉 Python"
+        assert detail_body["source_name"] == "字节跳动中国招聘官网"
+        assert detail_body["employment_type_name"] == "实习"
+        assert detail_body["locations"][0]["name"] == "北京"
+        assert detail_body["categories"] == [
+            {
+                "external_id": "backend",
+                "name": "后端",
+                "parent_name": None,
+                "assignment_method": "direct_field",
+            }
+        ]
+        assert detail_body["business_units"] == []
+        assert detail_body["version_count"] == 1
 
         missing = client.get("/api/v1/jobs/bytedance_cn/does-not-exist")
         assert missing.status_code == 404

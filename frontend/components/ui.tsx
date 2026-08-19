@@ -99,7 +99,7 @@ export function EmptyState({ title, detail = "当前条件下暂无数据。" }:
 }
 
 export function ChannelTag({ channel }: { channel: string }) {
-  return <span className="tag channel-tag">{channelLabel(channel)}</span>;
+  return <span className={`tag channel-tag channel-${channel}`}>{channelLabel(channel)}</span>;
 }
 
 export function TableWrap({ children }: { children: React.ReactNode }) {

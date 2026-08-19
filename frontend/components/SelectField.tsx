@@ -3,7 +3,9 @@
 import { useEffect, useRef, useState } from "react";
 import { Check, ChevronDown } from "lucide-react";
 
-export type SelectOption = { value: string; label: string };
+import { CompanyLogo } from "@/components/CompanyLogo";
+
+export type SelectOption = { value: string; label: string; companyKey?: string };
 
 export function SelectField({
   label,
@@ -70,7 +72,10 @@ export function SelectField({
                   setOpen(false);
                 }}
               >
-                <span>{option.label}</span>
+                <span className="select-option-label">
+                  {option.companyKey && <CompanyLogo companyKey={option.companyKey} companyName={option.label} />}
+                  <span>{option.label}</span>
+                </span>
                 {option.value === value && <Check size={14} className="select-check" />}
               </button>
             ))}

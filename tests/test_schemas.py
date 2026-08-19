@@ -58,6 +58,15 @@ def test_content_hash_ignores_source_update_time_but_tracks_source_status() -> N
     assert record.content_hash() != changed_status.content_hash()
 
 
+def test_content_hash_tracks_description_and_requirements_changes() -> None:
+    record = make_record()
+    changed_description = record.model_copy(update={"description": "新的职位描述"})
+    changed_requirements = record.model_copy(update={"requirements": "新的职位要求"})
+
+    assert record.content_hash() != changed_description.content_hash()
+    assert record.content_hash() != changed_requirements.content_hash()
+
+
 def test_required_source_fields_are_not_silently_empty() -> None:
     payload = make_record().model_dump()
     payload["external_code"] = ""

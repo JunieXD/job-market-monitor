@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronDown, Search, X } from "lucide-react";
 
+import { CompanyLogo } from "@/components/CompanyLogo";
 import type { SelectOption } from "@/components/SelectField";
 import { matchesSubsequence } from "@/lib/search";
 
@@ -163,7 +164,10 @@ export function MultiSelectFilter({
                   onClick={() => toggle(option.value)}
                 >
                   <span className={`filter-check ${selected ? "selected" : ""}`}>{selected && <Check size={13} />}</span>
-                  <span>{option.label}</span>
+                  <span className="filter-option-label">
+                    {option.companyKey && <CompanyLogo companyKey={option.companyKey} companyName={option.label} />}
+                    <span>{option.label}</span>
+                  </span>
                 </button>
               );
             }) : <div className="filter-empty">没有匹配的选项</div>}

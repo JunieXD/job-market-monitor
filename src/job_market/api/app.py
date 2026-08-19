@@ -436,11 +436,15 @@ def create_app(
         tags=["岗位"],
     )
     def job_detail(source_key: str, external_id: str, request: Request) -> dict[str, Any]:
+        engine = request.app.state.engine
+        params = {"source_key": source_key, "external_id": external_id}
         rows = _query_rows(
-            request.app.state.engine,
+            engine,
             """
             SELECT j.external_id, s.key AS source_key, c.key AS company_key,
-                   c.name AS company_name, j.channel, j.title, j.description,
+                   c.name AS company_name, s.display_name AS source_name,
+                   j.channel, j.employment_type_name,
+                   j.recruitment_project_name, j.title, j.description,
                    j.requirements, j.source_url, j.published_at,
                    j.source_updated_at, j.source_status, j.recruitment_count,
                    j.degree_code, j.degree_name, j.experience_min_years,
@@ -453,11 +457,75 @@ def create_app(
             JOIN companies AS c ON c.id = s.company_id
             WHERE s.key = :source_key AND j.external_id = :external_id
             """,
-            {"source_key": source_key, "external_id": external_id},
+            params,
         )
         if not rows:
             raise HTTPException(status_code=404, detail="岗位不存在")
-        return rows[0]
+        detail = rows[0]
+        detail["locations"] = _query_rows(
+            engine,
+            """
+            SELECT l.code, l.name, l.country_name, l.state_name,
+                   l.district_name, l.address
+            FROM jobs AS j
+            JOIN sources AS s ON s.id = j.source_id
+            JOIN job_locations AS jl ON jl.job_id = j.id
+            JOIN locations AS l ON l.id = jl.location_id
+            WHERE s.key = :source_key AND j.external_id = :external_id
+            ORDER BY l.name, l.code
+            """,
+            params,
+        )
+        detail["categories"] = _query_rows(
+            engine,
+            """
+            SELECT sc.external_id, sc.name, parent.name AS parent_name,
+                   jvsc.assignment_method
+            FROM jobs AS j
+            JOIN sources AS s ON s.id = j.source_id
+            JOIN job_versions AS jv
+              ON jv.job_id = j.id AND jv.content_hash = j.content_hash
+            JOIN job_version_source_categories AS jvsc
+              ON jvsc.job_version_id = jv.id
+            JOIN source_categories AS sc ON sc.id = jvsc.source_category_id
+            LEFT JOIN source_categories AS parent ON parent.id = sc.parent_id
+            WHERE s.key = :source_key AND j.external_id = :external_id
+            ORDER BY COALESCE(parent.name, ''), sc.name, sc.external_id
+            """,
+            params,
+        )
+        detail["business_units"] = _query_rows(
+            engine,
+            """
+            SELECT sbu.external_code AS code, sbu.name
+            FROM jobs AS j
+            JOIN sources AS s ON s.id = j.source_id
+            JOIN job_versions AS jv
+              ON jv.job_id = j.id AND jv.content_hash = j.content_hash
+            JOIN job_version_business_units AS jvbu
+              ON jvbu.job_version_id = jv.id
+            JOIN source_business_units AS sbu
+              ON sbu.id = jvbu.source_business_unit_id
+            WHERE s.key = :source_key AND j.external_id = :external_id
+            ORDER BY sbu.name, sbu.external_code
+            """,
+            params,
+        )
+        detail["version_count"] = int(
+            _query_scalar(
+                engine,
+                """
+                SELECT COUNT(*)
+                FROM job_versions AS jv
+                JOIN jobs AS j ON j.id = jv.job_id
+                JOIN sources AS s ON s.id = j.source_id
+                WHERE s.key = :source_key AND j.external_id = :external_id
+                """,
+                params,
+            )
+            or 0
+        )
+        return detail
 
     @app.get("/api/v1/quality/source-health", tags=["质量"])
     def source_health(request: Request) -> dict[str, Any]:
