@@ -1,5 +1,6 @@
 import argparse
 import asyncio
+import hashlib
 import json
 import sys
 import traceback
@@ -449,6 +450,16 @@ def category_summary(result: CollectionResult) -> dict[str, object]:
     }
 
 
+def collection_hash(result: CollectionResult) -> str:
+    """Return a stable fingerprint without exposing collected job content."""
+    canonical = json.dumps(
+        sorted((job.external_id, job.content_hash()) for job in result.jobs),
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
 async def close_browser_stack(
     context: Any | None,
     browser: Any | None,
@@ -680,6 +691,7 @@ async def crawl(args: argparse.Namespace, settings: Settings) -> int:
                     "source": args.source,
                     "channel": channel.value,
                     "jobs": len(result.jobs),
+                    "collection_hash": collection_hash(result),
                     "pages": result.pages_fetched,
                     "partitions": result.partition_counts,
                     "complete": result.complete,

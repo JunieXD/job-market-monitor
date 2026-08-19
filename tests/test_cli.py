@@ -5,7 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import job_market.cli as cli
-from job_market.cli import category_summary
+from job_market.cli import category_summary, collection_hash
 from job_market.schemas import (
     CategoryAssignmentMethod,
     Channel,
@@ -70,6 +70,33 @@ def test_incomplete_collection_is_never_absence_authoritative() -> None:
     )
 
     assert result.absence_authoritative is False
+
+
+def test_collection_hash_is_stable_across_job_order() -> None:
+    def job(external_id: str, title: str) -> JobRecord:
+        return JobRecord(
+            source_key="example",
+            external_id=external_id,
+            source_url=f"https://example.test/{external_id}",
+            company_name="示例公司",
+            channel=Channel.EXPERIENCED,
+            employment_type_id="social",
+            employment_type_name="社会招聘",
+            title=title,
+            source_payload={"id": external_id},
+        )
+
+    first = CollectionResult(
+        channel=Channel.EXPERIENCED,
+        jobs=[job("b", "岗位 B"), job("a", "岗位 A")],
+        snapshots=[],
+        partition_counts={"all": 2},
+        pages_fetched=1,
+        complete=True,
+    )
+    second = first.model_copy(update={"jobs": list(reversed(first.jobs))})
+
+    assert collection_hash(first) == collection_hash(second)
 
 
 def test_source_summary_is_derived_from_registry(monkeypatch, capsys) -> None:
