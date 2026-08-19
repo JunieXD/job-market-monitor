@@ -65,6 +65,20 @@ gzip 快照保存，原始证据不因网络优化删除。
 虚拟机当前真实批次运行时不要做矩阵实验，否则带宽和 CPU/内存数据会被污染。批次结束后，固定
 同一组代表来源（建议字节社招、京东社招、网易综合、阿里校园），每一档至少重复两次：
 
+仓库中的 `deploy/run-concurrency-benchmark.sh` 会执行固定来源的 dry-run，不写 PostgreSQL 或原始
+数据，并在输出目录保存每个来源的 JSONL、退出码、墙钟和 Docker 资源采样。可在 Ubuntu 上按档位
+运行：
+
+```bash
+BENCHMARK_PARALLEL=1 deploy/run-concurrency-benchmark.sh
+BENCHMARK_PARALLEL=2 deploy/run-concurrency-benchmark.sh
+BENCHMARK_PARALLEL=3 deploy/run-concurrency-benchmark.sh
+BENCHMARK_PARALLEL=4 deploy/run-concurrency-benchmark.sh
+```
+
+默认每个来源最多抓 20 页；要做完整性矩阵可设置 `BENCHMARK_MAX_PAGES=1000`，但耗时和流量会
+明显增加。每一档应使用新的 `BENCHMARK_RUN_ID`，不要覆盖之前的输出。
+
 ```text
 MAX_PARALLEL_SOURCES=1, 2, 3, 4
 CRAWL_BLOCK_NONESSENTIAL_RESOURCES=true
