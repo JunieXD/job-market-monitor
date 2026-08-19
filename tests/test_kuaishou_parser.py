@@ -1,6 +1,7 @@
 import json
 from datetime import datetime
 from pathlib import Path
+from unittest.mock import AsyncMock
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -22,6 +23,26 @@ DICTIONARIES = SourceDictionaries(
     categories={"B009": {"code": "B009", "name": "工程类"}},
     experiences={"5": {"code": "5", "name": "3-5年"}},
 )
+
+
+@pytest.mark.asyncio
+async def test_kuaishou_retries_opening_a_partition(monkeypatch) -> None:
+    connector = KuaishouConnector.__new__(KuaishouConnector)
+    payload = {"code": 0, "result": {}}
+    connector._open_partition = AsyncMock(
+        side_effect=[TimeoutError("one"), TimeoutError("two"), payload]
+    )
+    sleep = AsyncMock()
+    monkeypatch.setattr("job_market.connectors.retry.asyncio.sleep", sleep)
+
+    result = await connector._open_partition_with_retry(
+        PORTALS[Channel.EXPERIENCED],
+        "domestic",
+    )
+
+    assert result == payload
+    assert connector._open_partition.await_count == 3
+    assert [call.args[0] for call in sleep.await_args_list] == [1.0, 2.0]
 
 
 def test_kuaishou_job_uses_official_dictionaries_and_direct_fields() -> None:

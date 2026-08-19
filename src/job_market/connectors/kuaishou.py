@@ -18,6 +18,7 @@ from job_market.connectors.browser_json import (
     enqueue_json_response,
     next_json_payload,
 )
+from job_market.connectors.retry import retry_async
 from job_market.raw_store import RawStore
 from job_market.schemas import (
     CategoryAssignmentMethod,
@@ -122,7 +123,7 @@ class KuaishouConnector:
         complete = True
 
         for partition in PARTITIONS:
-            root_payload = await self._open_partition(portal, partition)
+            root_payload = await self._open_partition_with_retry(portal, partition)
             root = self._position_page(root_payload, expected_page=1)
             partition_counts[partition] = root["total"]
             self._save_payload(channel, f"{partition}-root", 1, root_payload)
@@ -136,7 +137,7 @@ class KuaishouConnector:
                     break
 
                 category_partition = f"{partition}-category-{category_code}"
-                payload = await self._open_partition(
+                payload = await self._open_partition_with_retry(
                     portal,
                     partition,
                     category_code,
@@ -181,7 +182,7 @@ class KuaishouConnector:
                         child_partition = (
                             f"{category_partition}-location-{location_code}"
                         )
-                        child_payload = await self._open_partition(
+                        child_payload = await self._open_partition_with_retry(
                             portal,
                             location_code,
                             category_code,
@@ -259,7 +260,7 @@ class KuaishouConnector:
 
         for attempt in range(1, MAX_PARTITION_ATTEMPTS + 1):
             if attempt > 1:
-                payload = await self._open_partition(
+                payload = await self._open_partition_with_retry(
                     portal,
                     work_location_code,
                     category_code,
@@ -314,6 +315,22 @@ class KuaishouConnector:
             f"Kuaishou {partition} did not converge after "
             f"{MAX_PARTITION_ATTEMPTS} attempts: "
             f"declared={target_total}, union={len(union_by_id)}"
+        )
+
+    async def _open_partition_with_retry(
+        self,
+        portal: PortalConfig,
+        partition: str,
+        category_code: str | None = None,
+    ) -> dict[str, Any]:
+        category_label = category_code or "root"
+        return await retry_async(
+            lambda: self._open_partition(portal, partition, category_code),
+            source=self.source_key,
+            operation_name=(
+                f"positions:{portal.channel.value}:{partition}:{category_label}"
+            ),
+            attempts=3,
         )
 
     @staticmethod
