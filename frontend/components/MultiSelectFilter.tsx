@@ -24,6 +24,7 @@ export function MultiSelectFilter({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const rootRef = useRef<HTMLDivElement>(null);
+  const autoRetainResultsRef = useRef(false);
   const allValues = useMemo(() => options.map((option) => option.value), [options]);
   const effectiveValues = useMemo(
     () => new Set(values === null ? allValues : values),
@@ -58,9 +59,25 @@ export function MultiSelectFilter({
     return `${label} ${values.length} 项`;
   }, [label, options, values]);
 
-  function commit(next: Set<string>) {
+  function commit(next: Set<string>, manual = true) {
+    if (manual) autoRetainResultsRef.current = false;
     const selected = allValues.filter((value) => next.has(value));
     onValuesChange(selected.length === allValues.length ? null : selected);
+  }
+
+  function updateQuery(nextQuery: string) {
+    if (!query && nextQuery && values === null) {
+      autoRetainResultsRef.current = true;
+    } else if (!nextQuery) {
+      autoRetainResultsRef.current = false;
+    }
+    setQuery(nextQuery);
+    if (autoRetainResultsRef.current) {
+      const matchingValues = options
+        .filter((option) => matchesSubsequence(option.label, nextQuery))
+        .map((option) => option.value);
+      commit(new Set(matchingValues), false);
+    }
   }
 
   function toggle(value: string) {
@@ -105,7 +122,7 @@ export function MultiSelectFilter({
             <input
               autoFocus
               value={query}
-              onChange={(event) => setQuery(event.target.value)}
+              onChange={(event) => updateQuery(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === "Enter") {
                   event.preventDefault();
@@ -116,7 +133,7 @@ export function MultiSelectFilter({
               aria-label={`搜索${label}选项`}
             />
             {query && (
-              <button type="button" className="clear-search" onClick={() => setQuery("")} aria-label="清除选项搜索" title="清除选项搜索">
+              <button type="button" className="clear-search" onClick={() => updateQuery("")} aria-label="清除选项搜索" title="清除选项搜索">
                 <X size={14} />
               </button>
             )}
@@ -125,7 +142,7 @@ export function MultiSelectFilter({
             <button type="button" onClick={retainResults} disabled={!filtered.length}>仅保留结果</button>
             <button type="button" onClick={selectResults} disabled={!filtered.length}>全选结果</button>
             <button type="button" onClick={deselectResults} disabled={!filtered.length}>取消结果</button>
-            <button type="button" onClick={() => onValuesChange(null)}>清除筛选</button>
+            <button type="button" onClick={() => { autoRetainResultsRef.current = false; setQuery(""); onValuesChange(null); }}>清除筛选</button>
           </div>
           <div className="filter-options" role="listbox" aria-multiselectable="true" aria-label={`${label}选项`}>
             {filtered.length ? filtered.map((option) => {
