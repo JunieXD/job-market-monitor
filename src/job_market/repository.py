@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from job_market.models import (
     CanonicalLocation,
+    CategoryMapping,
     Company,
     CrawlRun,
     CrawlRunFieldStat,
@@ -672,11 +673,25 @@ class Repository:
         for category_id, method in expected.items():
             stored_method = existing.get(category_id)
             if stored_method is None:
+                mapping = session.scalar(
+                    select(CategoryMapping).where(
+                        CategoryMapping.source_category_id == category_id,
+                        CategoryMapping.is_current.is_(True),
+                    )
+                )
                 session.add(
                     JobVersionSourceCategory(
                         job_version_id=version_id,
                         source_category_id=category_id,
                         assignment_method=method,
+                        canonical_category_id=(
+                            None if mapping is None else mapping.canonical_category_id
+                        ),
+                        mapping_method=None if mapping is None else mapping.mapping_method,
+                        mapping_version=None if mapping is None else mapping.mapping_version,
+                        mapping_confidence=(
+                            None if mapping is None else mapping.confidence
+                        ),
                     )
                 )
             elif stored_method != method:
@@ -872,10 +887,24 @@ class Repository:
         )
         for location in locations:
             if location.id not in existing_ids:
+                mapping = session.scalar(
+                    select(SourceLocationMapping).where(
+                        SourceLocationMapping.location_id == location.id,
+                        SourceLocationMapping.is_current.is_(True),
+                    )
+                )
                 session.add(
                     JobVersionLocation(
                         job_version_id=version_id,
                         location_id=location.id,
+                        canonical_location_id=(
+                            None if mapping is None else mapping.canonical_location_id
+                        ),
+                        mapping_method=None if mapping is None else mapping.mapping_method,
+                        mapping_version=None if mapping is None else mapping.mapping_version,
+                        mapping_confidence=(
+                            None if mapping is None else mapping.confidence
+                        ),
                     )
                 )
 

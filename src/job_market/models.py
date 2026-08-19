@@ -306,11 +306,20 @@ class JobLocation(Base):
 
 class JobVersionLocation(Base):
     __tablename__ = "job_version_locations"
+    __table_args__ = (
+        Index("ix_job_version_locations_canonical", "canonical_location_id"),
+    )
 
     job_version_id: Mapped[int] = mapped_column(
         ForeignKey("job_versions.id"), primary_key=True
     )
     location_id: Mapped[int] = mapped_column(ForeignKey("locations.id"), primary_key=True)
+    canonical_location_id: Mapped[int | None] = mapped_column(
+        ForeignKey("canonical_locations.id")
+    )
+    mapping_method: Mapped[str | None] = mapped_column(String(30))
+    mapping_version: Mapped[str | None] = mapped_column(String(100))
+    mapping_confidence: Mapped[Decimal | None] = mapped_column(Numeric(5, 4))
 
 
 class JobVersionBusinessUnit(Base):
@@ -336,6 +345,10 @@ class JobVersionSourceCategory(Base):
             "source_category_id",
             "job_version_id",
         ),
+        Index(
+            "ix_job_version_source_categories_canonical",
+            "canonical_category_id",
+        ),
     )
 
     job_version_id: Mapped[int] = mapped_column(
@@ -345,6 +358,12 @@ class JobVersionSourceCategory(Base):
         ForeignKey("source_categories.id"), primary_key=True
     )
     assignment_method: Mapped[str] = mapped_column(String(30), nullable=False)
+    canonical_category_id: Mapped[int | None] = mapped_column(
+        ForeignKey("canonical_categories.id")
+    )
+    mapping_method: Mapped[str | None] = mapped_column(String(30))
+    mapping_version: Mapped[str | None] = mapped_column(String(100))
+    mapping_confidence: Mapped[Decimal | None] = mapped_column(Numeric(5, 4))
 
 
 class JobLifecycleEvent(Base):

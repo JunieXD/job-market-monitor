@@ -113,6 +113,13 @@ def test_daily_views_use_baselines_versioned_dimensions_and_fractional_cities() 
     assert bool(company[0]["is_baseline"]) is True
     assert company[1]["first_missing_posting_count"] == 1
 
+    coverage = analytics.coverage(snapshot_date=clock().date() - timedelta(days=1))
+    assert coverage["configured_source_channel_count"] == 2
+    assert coverage["standard_snapshot_count"] == 1
+    assert coverage["successful_source_channel_count"] == 1
+    assert coverage["absence_authoritative_source_channel_count"] == 1
+    assert coverage["coverage_ratio"] == pytest.approx(0.5)
+
     categories = analytics.category_distribution(
         company_key="bytedance",
         snapshot_date=clock().date() - timedelta(days=1),

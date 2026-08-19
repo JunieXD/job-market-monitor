@@ -43,6 +43,10 @@
   `job_version_id`。
 - `job_version_locations` 保存某个岗位版本当时对应的全部地点。
 - `job_version_source_categories` 保存当时的全部来源分类及赋值方法。
+
+`job_version_locations` 和 `job_version_source_categories` 同时保存该版本观测时使用的统一维度
+映射 ID、映射版本、方法和置信度。后续发布新的当前映射不会改写旧岗位版本；历史分析必须优先使用
+这些版本快照字段，而不能直接连接 `is_current` 映射。
 - `job_locations` 只用于快速查询岗位的最新地点，不能用于历史分析。
 
 即使岗位内容从 A 变为 B 后又恢复 A，新的观测仍指向旧的 A 版本，历史顺序由观测表保留。
