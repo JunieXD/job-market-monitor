@@ -21,6 +21,7 @@ class AnalyticsMeta(BaseModel):
     filters: dict[str, Any] = Field(default_factory=dict)
     coverage: CoverageSummary
     metric_definition: str
+    pagination: dict[str, int] | None = None
 
 
 class AnalyticsEnvelope(BaseModel):

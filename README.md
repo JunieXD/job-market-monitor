@@ -157,6 +157,24 @@ systemctl list-timers job-market-crawl.timer
 生产 Compose 不会创建 PostgreSQL，而是加入已有的外部 Docker network。部署前需要填写
 `DATABASE_URL` 和 `DATABASE_DOCKER_NETWORK`，完整说明见[部署说明](docs/deployment.md)。
 
+### 启动只读分析 API
+
+本地 Compose 会同时提供 API，默认监听 `127.0.0.1:8000`：
+
+```bash
+docker compose up -d postgres api
+curl http://127.0.0.1:8000/healthz
+```
+
+接口文档由 FastAPI 自动生成：
+
+```text
+http://127.0.0.1:8000/docs
+```
+
+当前 API 提供市场总览、公司趋势、分类分布、城市分布、岗位分页、岗位详情和来源健康检查。所有
+分析响应都带有快照日期、指标口径和来源覆盖状态；API 只读数据库，不执行采集或修改岗位事实。
+
 ## 目录结构
 
 ```text
@@ -200,6 +218,7 @@ bash -n deploy/run-scheduled-crawls.sh
 | [数据源目录](docs/source-catalog.md) | 已接入官网、渠道范围、计数边界和已知限制 |
 | [指标定义](docs/metrics.md) | 岗位趋势、生命周期和公司/来源统计口径 |
 | [部署说明](docs/deployment.md) | 本地 Ubuntu 验证、已有 PostgreSQL 和 systemd 定时任务 |
+| [网站与 API 实施计划](docs/web-api-plan.md) | 页面、接口、验收标准和分阶段提交目标 |
 | [贡献指南](CONTRIBUTING.md) | 新增连接器、fixture、测试和数据安全要求 |
 | [安全策略](SECURITY.md) | 安全漏洞报告和运行数据边界 |
 | [生产 Compose](compose.production.yaml) | 接入已有 PostgreSQL 的生产容器配置 |

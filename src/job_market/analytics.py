@@ -97,6 +97,39 @@ class AnalyticsRepository:
             channel=channel,
         )
 
+    def company_trends(
+        self,
+        *,
+        company_key: str | None = None,
+        channel: str | None = None,
+        start_date: date | None = None,
+        end_date: date | None = None,
+    ) -> list[dict[str, Any]]:
+        filters: list[str] = []
+        params: dict[str, object] = {}
+        if company_key is not None:
+            filters.append("company_key = :company_key")
+            params["company_key"] = company_key
+        if channel is not None:
+            filters.append("channel = :channel")
+            params["channel"] = channel
+        if start_date is not None:
+            filters.append("snapshot_date >= :start_date")
+            params["start_date"] = start_date
+        if end_date is not None:
+            filters.append("snapshot_date <= :end_date")
+            params["end_date"] = end_date
+        where = f" WHERE {' AND '.join(filters)}" if filters else ""
+        statement = text(
+            "SELECT * FROM daily_company_stats"
+            f"{where} ORDER BY snapshot_date, company_key, channel, source_id"
+        )
+        with self.engine.connect() as connection:
+            return [
+                dict(row)
+                for row in connection.execute(statement, params).mappings()
+            ]
+
     def category_distribution(
         self,
         *,

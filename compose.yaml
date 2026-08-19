@@ -65,6 +65,29 @@ services:
       postgres:
         condition: service_healthy
 
+  api:
+    build:
+      context: .
+    init: true
+    entrypoint: ["uvicorn"]
+    command:
+      [
+        "job_market.api.app:create_app",
+        "--factory",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000",
+      ]
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://job_market:change-me-before-deploying@postgres:5432/job_market}
+      SOURCE_STALE_AFTER_HOURS: ${SOURCE_STALE_AFTER_HOURS:-36}
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
 volumes:
   postgres-data:
   raw-data:
