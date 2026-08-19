@@ -14,10 +14,12 @@ from typing import Any
 from playwright.async_api import Page
 
 from job_market.config import Settings
+from job_market.connectors.retry import retry_async
 from job_market.raw_store import RawStore
 from job_market.schemas import (
     CategoryAssignmentMethod,
     Channel,
+    CollectionIssue,
     CollectionResult,
     JobRecord,
     LocationRecord,
@@ -71,6 +73,7 @@ class MeituanConnector:
         self.snapshots: list[RawSnapshotRecord] = []
         self.pages_fetched = 0
         self._last_request_at = 0.0
+        self.issues: list[CollectionIssue] = []
 
     async def collect(
         self,
@@ -112,9 +115,21 @@ class MeituanConnector:
             },
             pages_fetched=self.pages_fetched,
             complete=complete,
+            issues=self.issues,
         )
 
     async def _fetch_page(
+        self,
+        portal: PortalConfig,
+        page_number: int,
+    ) -> dict[str, Any]:
+        return await retry_async(
+            lambda: self._fetch_page_once(portal, page_number),
+            source=self.source_key,
+            operation_name=f"{portal.channel.value}:page:{page_number}",
+        )
+
+    async def _fetch_page_once(
         self,
         portal: PortalConfig,
         page_number: int,
@@ -185,10 +200,40 @@ class MeituanConnector:
             pass_by_id: dict[str, JobRecord] = {}
             total_pages = first["total_pages"]
             partition = "root" if attempt == 1 else f"root-retry-{attempt}"
+            page_failed = False
             for page_number in range(1, total_pages + 1):
                 if max_pages is not None and self.pages_fetched >= max_pages:
                     return union_by_id or pass_by_id, target_total, False, observations
-                current = self._position_page(payload, expected_page=page_number)
+                if page_number > 1:
+                    try:
+                        payload = await self._fetch_page(portal, page_number)
+                    except Exception as exc:
+                        page_failed = True
+                        self.issues.append(
+                            CollectionIssue(
+                                scope="page",
+                                partition=partition,
+                                page=page_number,
+                                error_type=type(exc).__name__,
+                                message=str(exc) or "Meituan page remained unavailable",
+                                retry_count=2,
+                            )
+                        )
+                        continue
+                try:
+                    current = self._position_page(payload, expected_page=page_number)
+                except RuntimeError as exc:
+                    page_failed = True
+                    self.issues.append(
+                        CollectionIssue(
+                            scope="page",
+                            partition=partition,
+                            page=page_number,
+                            error_type=type(exc).__name__,
+                            message=str(exc),
+                        )
+                    )
+                    continue
                 if (
                     current["total_count"] != target_total
                     or current["total_pages"] != total_pages
@@ -197,7 +242,20 @@ class MeituanConnector:
                 self.pages_fetched += 1
                 self._save_payload(portal.channel, partition, page_number, payload)
                 for raw in current["rows"]:
-                    record = self.parse_job(raw, portal)
+                    try:
+                        record = self.parse_job(raw, portal)
+                    except (TypeError, ValueError) as exc:
+                        self.issues.append(
+                            CollectionIssue(
+                                scope="job",
+                                partition=partition,
+                                page=page_number,
+                                external_id=_optional_string(raw.get("jobUnionId")),
+                                error_type=type(exc).__name__,
+                                message=str(exc) or "Meituan job parsing failed",
+                            )
+                        )
+                        continue
                     previous = pass_by_id.get(record.external_id)
                     if previous is not None and (
                         previous.content_hash() != record.content_hash()
@@ -207,8 +265,6 @@ class MeituanConnector:
                             f"{record.external_id}"
                         )
                     pass_by_id[record.external_id] = record
-                if page_number < total_pages:
-                    payload = await self._fetch_page(portal, page_number + 1)
             else:
                 for external_id, record in pass_by_id.items():
                     previous = union_by_id.get(external_id)
@@ -219,19 +275,28 @@ class MeituanConnector:
                             f"Meituan job {external_id} changed during retries"
                         )
                     union_by_id[external_id] = record
-                if len(union_by_id) == target_total:
+                if page_failed:
+                    return union_by_id, target_total, False, observations
+                if len(union_by_id) == target_total and not self.issues:
                     return union_by_id, target_total, True, observations
                 if len(union_by_id) > target_total:
-                    raise RuntimeError(
-                        "Meituan observations exceeded the declared total: "
-                        f"declared={target_total}, unique={len(union_by_id)}"
-                    )
+                    break
 
-        raise RuntimeError(
-            "Meituan root did not converge after "
+        message = (
+            "Meituan live list did not converge after "
             f"{MAX_COLLECTION_ATTEMPTS} attempts: declared={target_total}, "
-            f"union={len(union_by_id)}"
+            f"unique={len(union_by_id)}"
         )
+        self.issues.append(
+            CollectionIssue(
+                scope="partition",
+                partition="root",
+                error_type="DynamicListDidNotConverge",
+                message=message,
+                retry_count=MAX_COLLECTION_ATTEMPTS - 1,
+            )
+        )
+        return union_by_id, target_total, False, observations
 
     @staticmethod
     def _position_page(payload: dict[str, Any], *, expected_page: int) -> dict[str, Any]:
@@ -313,12 +378,8 @@ class MeituanConnector:
     def parse_job(raw: dict[str, Any], portal: PortalConfig) -> JobRecord:
         external_id = _required_string(raw, "jobUnionId", "Meituan job id")
         title = _required_string(raw, "name", f"Meituan job title ({external_id})")
-        description = _required_string(raw, "jobDuty", f"Meituan job duty ({external_id})")
-        requirements = _required_string(
-            raw,
-            "jobRequirement",
-            f"Meituan job requirement ({external_id})",
-        )
+        description = _optional_string(raw.get("jobDuty"))
+        requirements = _optional_string(raw.get("jobRequirement"))
         employment_type_id = _required_string(raw, "jobType", f"Meituan job type ({external_id})")
         locations = _locations(raw.get("cityList"), external_id)
         categories = _categories(raw)
@@ -372,7 +433,7 @@ def _timestamp_ms(value: Any, field: str) -> datetime | None:
 
 def _locations(value: Any, external_id: str) -> list[LocationRecord]:
     if not isinstance(value, list):
-        raise ValueError(f"Meituan job has no city list: {external_id}")
+        return []
     locations: list[LocationRecord] = []
     seen: set[str] = set()
     for item in value:
@@ -386,8 +447,6 @@ def _locations(value: Any, external_id: str) -> list[LocationRecord]:
             continue
         seen.add(code)
         locations.append(LocationRecord(code=code, name=name))
-    if not locations:
-        raise ValueError(f"Meituan job has no work location: {external_id}")
     return locations
 
 

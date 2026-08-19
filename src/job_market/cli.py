@@ -3,7 +3,6 @@ import asyncio
 import contextlib
 import hashlib
 import json
-import sys
 import traceback
 from collections import Counter
 from datetime import timedelta
@@ -44,13 +43,15 @@ from job_market.connectors.xiaohongshu import XiaohongshuConnector
 from job_market.connectors.xiaomi import XiaomiConnector
 from job_market.db import check_schema, create_schema, make_engine
 from job_market.health import SourceHealthChecker
+from job_market.observability import log_event
 from job_market.quality import DataQualityChecker
 from job_market.raw_store import RawStore
 from job_market.repository import Repository
 from job_market.runtime_checks import RuntimeChecker
 from job_market.schemas import Channel, CollectionResult
 
-PROGRESS_UPDATE_SECONDS = 2.0
+PROGRESS_UPDATE_SECONDS = 15.0
+PROGRESS_LOG_SECONDS = 60.0
 
 SOURCE_SPECS = {
     "bytedance": {
@@ -507,15 +508,31 @@ async def report_collection_progress(
     run_id: str,
     connector: Any,
     discovered_ids: set[str],
+    *,
+    source: str,
+    channel: str,
 ) -> None:
+    elapsed = 0.0
     while True:
         await asyncio.sleep(PROGRESS_UPDATE_SECONDS)
+        elapsed += PROGRESS_UPDATE_SECONDS
+        page_count = max(0, int(getattr(connector, "pages_fetched", 0)))
         await asyncio.to_thread(
             repository.update_run_progress,
             run_id,
             discovered_count=len(discovered_ids),
-            page_count=max(0, int(getattr(connector, "pages_fetched", 0))),
+            page_count=page_count,
         )
+        if elapsed >= PROGRESS_LOG_SECONDS:
+            log_event(
+                "channel_progress",
+                run_id=run_id,
+                source=source,
+                channel=channel,
+                discovered_count=len(discovered_ids),
+                page_count=page_count,
+            )
+            elapsed = 0.0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -662,20 +679,16 @@ async def crawl(args: argparse.Namespace, settings: Settings) -> int:
                 channel for channel in channels if channel.value in due_channels
             ]
             if not channels:
-                print(
-                    json.dumps(
-                        {
-                            "source": args.source,
-                            "status": "skipped",
-                            "reason": "all_channels_already_collected_today",
-                        },
-                        ensure_ascii=False,
-                        sort_keys=True,
-                    )
+                log_event(
+                    "source_skipped",
+                    source=args.source,
+                    status="skipped",
+                    reason="all_channels_already_collected_today",
                 )
                 return 0
 
     failures: list[str] = []
+    partial_channels: list[str] = []
     for channel in channels:
         run_id = "dry-run"
         connector = None
@@ -684,9 +697,18 @@ async def crawl(args: argparse.Namespace, settings: Settings) -> int:
         playwright = None
         network_metrics: BrowserNetworkMetrics | None = None
         progress_task: asyncio.Task[None] | None = None
+        channel_started_at = asyncio.get_running_loop().time()
         try:
             if repository is not None and source_id is not None:
                 run_id = repository.start_run(source_id, channel.value)
+            log_event(
+                "channel_started",
+                run_id=run_id,
+                source=args.source,
+                channel=channel.value,
+                dry_run=args.dry_run,
+                timeout_seconds=timeout_seconds,
+            )
             raw_store = (
                 None
                 if args.dry_run
@@ -721,6 +743,8 @@ async def crawl(args: argparse.Namespace, settings: Settings) -> int:
                             run_id,
                             connector,
                             discovered_ids,
+                            source=args.source,
+                            channel=channel.value,
                         )
                     )
                 try:
@@ -743,15 +767,22 @@ async def crawl(args: argparse.Namespace, settings: Settings) -> int:
                     "partitions": result.partition_counts,
                     "complete": result.complete,
                     "absence_authoritative": result.absence_authoritative,
+                    "outcome": result.outcome,
+                    "issue_count": len(result.issues),
+                    "issue_types": dict(
+                        sorted(Counter(issue.error_type for issue in result.issues).items())
+                    ),
                     "dry_run": args.dry_run,
                     "timeout_seconds": timeout_seconds,
                     "network": await network_metrics.snapshot(),
+                    "duration_seconds": round(
+                        asyncio.get_running_loop().time() - channel_started_at,
+                        3,
+                    ),
                 }
                 if result.complete:
                     summary["category_summary"] = category_summary(result)
                 if repository is not None:
-                    if not result.complete:
-                        raise RuntimeError("Refusing to persist an incomplete collection")
                     await asyncio.to_thread(
                         repository.update_run_progress,
                         run_id,
@@ -759,7 +790,9 @@ async def crawl(args: argparse.Namespace, settings: Settings) -> int:
                         page_count=result.pages_fetched,
                     )
                     summary["database"] = repository.ingest(run_id, result)
-                print(json.dumps(summary, ensure_ascii=False, sort_keys=True))
+                    if result.outcome == "partial":
+                        partial_channels.append(channel.value)
+                log_event("channel_finished", **summary)
             finally:
                 if progress_task is not None:
                     progress_task.cancel()
@@ -767,41 +800,68 @@ async def crawl(args: argparse.Namespace, settings: Settings) -> int:
                         await progress_task
                 cleanup_errors = await close_browser_stack(context, browser, playwright)
                 if cleanup_errors:
-                    print(
-                        json.dumps(
-                            {
-                                "source": args.source,
-                                "channel": channel.value,
-                                "cleanup_warnings": cleanup_errors,
-                            },
-                            ensure_ascii=False,
-                        ),
-                        file=sys.stderr,
+                    log_event(
+                        "browser_cleanup_warning",
+                        level="warning",
+                        source=args.source,
+                        channel=channel.value,
+                        cleanup_warnings=cleanup_errors,
                     )
         except Exception as exc:
             failures.append(f"{channel.value}: {exc}")
             if repository is not None and run_id != "dry-run":
-                repository.fail_run(
-                    run_id,
-                    traceback.format_exc(),
-                    [] if connector is None else connector.snapshots,
-                )
+                try:
+                    repository.fail_run(
+                        run_id,
+                        traceback.format_exc(),
+                        [] if connector is None else connector.snapshots,
+                        error_type=type(exc).__name__,
+                    )
+                except Exception as persistence_exc:
+                    log_event(
+                        "run_failure_persistence_failed",
+                        level="error",
+                        run_id=run_id,
+                        source=args.source,
+                        channel=channel.value,
+                        error_type=type(persistence_exc).__name__,
+                        error=str(persistence_exc),
+                    )
             error_payload = {
                 "run_id": run_id,
                 "source": args.source,
                 "channel": channel.value,
                 "error": str(exc),
+                "error_type": type(exc).__name__,
+                "duration_seconds": round(
+                    asyncio.get_running_loop().time() - channel_started_at,
+                    3,
+                ),
             }
             if network_metrics is not None:
                 error_payload["network"] = await network_metrics.snapshot()
-            print(
-                json.dumps(error_payload, ensure_ascii=False),
-                file=sys.stderr,
-            )
+            log_event("channel_failed", level="error", **error_payload)
 
     if failures:
-        print(json.dumps({"failures": failures}, ensure_ascii=False), file=sys.stderr)
+        log_event(
+            "source_finished",
+            level="error",
+            source=args.source,
+            outcome="failed",
+            failures=failures,
+            partial_channels=partial_channels,
+        )
         return 1
+    if partial_channels:
+        log_event(
+            "source_finished",
+            level="warning",
+            source=args.source,
+            outcome="partial",
+            partial_channels=partial_channels,
+        )
+        return 2
+    log_event("source_finished", source=args.source, outcome="success")
     return 0
 
 

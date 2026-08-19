@@ -1,11 +1,18 @@
 name: job-market-monitor
 
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   collector:
     build:
       context: .
     init: true
     shm_size: "1gb"
+    logging: *default-logging
     environment:
       DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL to the existing PostgreSQL instance}
       RAW_DATA_DIR: ${RAW_DATA_DIR:-/data/raw}
@@ -54,6 +61,7 @@ services:
       context: .
     init: true
     restart: unless-stopped
+    logging: *default-logging
     entrypoint: ["uvicorn"]
     command:
       [
@@ -63,6 +71,7 @@ services:
         "0.0.0.0",
         "--port",
         "8000",
+        "--no-access-log",
       ]
     environment:
       DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL to the existing PostgreSQL instance}
@@ -80,6 +89,7 @@ services:
         API_INTERNAL_URL: http://api:8000
     init: true
     restart: unless-stopped
+    logging: *default-logging
     environment:
       API_INTERNAL_URL: http://api:8000
     networks:

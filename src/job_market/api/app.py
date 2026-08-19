@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from contextlib import asynccontextmanager
 from datetime import date, datetime, time, timedelta
 from typing import Annotated, Any, Literal
@@ -513,7 +514,7 @@ def create_app(
                    c.name AS company_name, sc.channel, lr.id AS run_id,
                    lr.status AS attempt_status, lr.started_at, lr.finished_at,
                    lr.discovered_count, lr.page_count, lr.complete,
-                   lr.absence_authoritative, lr.error,
+                   lr.absence_authoritative, lr.issues, lr.error,
                    CASE WHEN ds.id IS NULL THEN 0 ELSE 1 END AS is_standard,
                    ls.last_standard_date
             FROM sources AS s
@@ -551,11 +552,20 @@ def create_app(
         for row in rows:
             error = row.pop("error", None)
             row["error_summary"] = _error_summary(error)
+            issues = row.get("issues") or []
+            if isinstance(issues, str):
+                try:
+                    issues = json.loads(issues)
+                except json.JSONDecodeError:
+                    issues = []
+            row["issues"] = issues if isinstance(issues, list) else []
             row["is_standard"] = bool(row["is_standard"])
             if row["attempt_status"] == "running":
                 state = "running"
             elif row["attempt_status"] == "failed":
                 state = "failed"
+            elif row["attempt_status"] == "partial":
+                state = "partial"
             elif row["is_standard"]:
                 state = "completed"
             elif row["attempt_status"] == "success":

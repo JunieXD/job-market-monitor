@@ -1,6 +1,8 @@
 import json
+from copy import deepcopy
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -67,3 +69,40 @@ def test_netease_rejects_invalid_recruitment_count() -> None:
 
     with pytest.raises(ValueError, match="recruitNum"):
         NetEaseConnector.parse_job(raw)
+
+
+def test_netease_preserves_job_without_optional_text_or_location() -> None:
+    raw = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    raw.pop("description")
+    raw.pop("requirement")
+    raw.pop("workPlaceNameList")
+
+    record = NetEaseConnector.parse_job(raw)
+
+    assert record.description is None
+    assert record.requirements is None
+    assert record.locations == []
+
+
+async def test_netease_dynamic_list_returns_partial_observations() -> None:
+    raw = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    payload = {"data": {"list": [raw, deepcopy(raw)], "pages": 1, "total": 2}}
+    connector = NetEaseConnector(
+        None,
+        SimpleNamespace(netease_request_delay_seconds=0.5),
+    )
+
+    async def same_page(page_number):
+        return payload
+
+    connector._fetch_page = same_page
+    jobs, _, complete, _ = await connector._collect_root(
+        Channel.GENERAL,
+        payload,
+        2,
+        None,
+    )
+
+    assert complete is False
+    assert len(jobs) == 1
+    assert connector.issues[-1].error_type == "DynamicListDidNotConverge"

@@ -11,6 +11,7 @@ from job_market.repository import Repository
 from job_market.schemas import (
     CategoryAssignmentMethod,
     Channel,
+    CollectionIssue,
     CollectionResult,
     JobRecord,
     LocationRecord,
@@ -215,3 +216,48 @@ def test_collection_status_exposes_progress_for_running_channel() -> None:
     assert running["state"] == "running"
     assert running["discovered_count"] == 37
     assert running["page_count"] == 4
+
+
+def test_collection_status_exposes_structured_partial_result() -> None:
+    engine = create_engine(
+        "sqlite+pysqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    create_schema(engine)
+    repository = Repository(engine)
+    source_id = repository.ensure_source()
+    run_id = repository.start_run(source_id, Channel.CAMPUS.value)
+    repository.ingest(
+        run_id,
+        CollectionResult(
+            channel=Channel.CAMPUS,
+            jobs=[],
+            snapshots=[],
+            partition_counts={"all": 2, "collected-unique": 1},
+            pages_fetched=1,
+            complete=False,
+            issues=[
+                CollectionIssue(
+                    scope="page",
+                    partition="root",
+                    page=2,
+                    error_type="PageUnavailable",
+                    message="page remained unavailable",
+                    retry_count=2,
+                )
+            ],
+        ),
+    )
+
+    with TestClient(create_app(engine=engine, settings=Settings())) as client:
+        response = client.get("/api/v1/collection/status")
+
+    partial = next(
+        row
+        for row in response.json()["channels"]
+        if row["channel"] == Channel.CAMPUS.value
+    )
+    assert partial["state"] == "partial"
+    assert partial["is_standard"] is False
+    assert partial["issues"][0]["page"] == 2

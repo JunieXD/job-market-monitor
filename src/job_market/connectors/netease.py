@@ -10,11 +10,13 @@ from typing import Any
 from playwright.async_api import Page
 
 from job_market.config import Settings
+from job_market.connectors.retry import retry_async
 from job_market.raw_store import RawStore
 from job_market.schemas import (
     BusinessUnitRecord,
     CategoryAssignmentMethod,
     Channel,
+    CollectionIssue,
     CollectionResult,
     JobRecord,
     LocationRecord,
@@ -41,6 +43,7 @@ class NetEaseConnector:
         self.snapshots: list[RawSnapshotRecord] = []
         self.pages_fetched = 0
         self._last_request_at = 0.0
+        self.issues: list[CollectionIssue] = []
 
     async def collect(
         self,
@@ -74,6 +77,7 @@ class NetEaseConnector:
             },
             pages_fetched=self.pages_fetched,
             complete=complete,
+            issues=self.issues,
         )
 
     async def _open_first_page(self) -> dict[str, Any]:
@@ -85,6 +89,13 @@ class NetEaseConnector:
         return await self._fetch_page(1)
 
     async def _fetch_page(self, page_number: int) -> dict[str, Any]:
+        return await retry_async(
+            lambda: self._fetch_page_once(page_number),
+            source=self.source_key,
+            operation_name=f"general:page:{page_number}",
+        )
+
+    async def _fetch_page_once(self, page_number: int) -> dict[str, Any]:
         await self._rate_limit()
         result = await self.page.evaluate(
             """async ({url, currentPage, pageSize}) => {
@@ -142,16 +153,59 @@ class NetEaseConnector:
             pass_by_id: dict[str, JobRecord] = {}
             total_pages = first["pages"]
             partition = "root" if attempt == 1 else f"root-retry-{attempt}"
+            page_failed = False
             for page_number in range(1, total_pages + 1):
                 if max_pages is not None and self.pages_fetched >= max_pages:
                     return union_by_id or pass_by_id, target_total, False, observations
-                current = self._page_data(payload, page_number)
+                if page_number > 1:
+                    try:
+                        payload = await self._fetch_page(page_number)
+                    except Exception as exc:
+                        page_failed = True
+                        self.issues.append(
+                            CollectionIssue(
+                                scope="page",
+                                partition=partition,
+                                page=page_number,
+                                error_type=type(exc).__name__,
+                                message=str(exc) or "NetEase page remained unavailable",
+                                retry_count=2,
+                            )
+                        )
+                        continue
+                try:
+                    current = self._page_data(payload, page_number)
+                except RuntimeError as exc:
+                    page_failed = True
+                    self.issues.append(
+                        CollectionIssue(
+                            scope="page",
+                            partition=partition,
+                            page=page_number,
+                            error_type=type(exc).__name__,
+                            message=str(exc),
+                        )
+                    )
+                    continue
                 if current["total"] != target_total or current["pages"] != total_pages:
                     break
                 self.pages_fetched += 1
                 self._save_payload(channel, partition, page_number, payload)
                 for raw in current["rows"]:
-                    record = self.parse_job(raw)
+                    try:
+                        record = self.parse_job(raw)
+                    except (TypeError, ValueError) as exc:
+                        self.issues.append(
+                            CollectionIssue(
+                                scope="job",
+                                partition=partition,
+                                page=page_number,
+                                external_id=_optional(raw.get("id")),
+                                error_type=type(exc).__name__,
+                                message=str(exc) or "NetEase job parsing failed",
+                            )
+                        )
+                        continue
                     previous = pass_by_id.get(record.external_id)
                     if previous is not None and (
                         previous.content_hash() != record.content_hash()
@@ -161,8 +215,6 @@ class NetEaseConnector:
                             f"{record.external_id}"
                         )
                     pass_by_id[record.external_id] = record
-                if page_number < total_pages:
-                    payload = await self._fetch_page(page_number + 1)
             else:
                 for external_id, record in pass_by_id.items():
                     previous = union_by_id.get(external_id)
@@ -173,19 +225,28 @@ class NetEaseConnector:
                             f"NetEase job {external_id} changed during retries"
                         )
                     union_by_id[external_id] = record
-                if len(union_by_id) == target_total:
+                if page_failed:
+                    return union_by_id, target_total, False, observations
+                if len(union_by_id) == target_total and not self.issues:
                     return union_by_id, target_total, True, observations
                 if len(union_by_id) > target_total:
-                    raise RuntimeError(
-                        "NetEase observations exceeded the declared total: "
-                        f"declared={target_total}, unique={len(union_by_id)}"
-                    )
+                    break
 
-        raise RuntimeError(
-            "NetEase root did not converge after "
+        message = (
+            "NetEase live list did not converge after "
             f"{MAX_COLLECTION_ATTEMPTS} attempts: declared={target_total}, "
-            f"union={len(union_by_id)}"
+            f"unique={len(union_by_id)}"
         )
+        self.issues.append(
+            CollectionIssue(
+                scope="partition",
+                partition="root",
+                error_type="DynamicListDidNotConverge",
+                message=message,
+                retry_count=MAX_COLLECTION_ATTEMPTS - 1,
+            )
+        )
+        return union_by_id, target_total, False, observations
 
     @staticmethod
     def _page_data(payload: dict[str, Any], expected_page: int) -> dict[str, Any]:
@@ -251,8 +312,8 @@ class NetEaseConnector:
     def parse_job(raw: dict[str, Any]) -> JobRecord:
         external_id = _required(raw, "id", "NetEase job id")
         title = _required(raw, "name", f"NetEase job title ({external_id})")
-        description = _required(raw, "description", f"NetEase job description ({external_id})")
-        requirements = _required(raw, "requirement", f"NetEase job requirement ({external_id})")
+        description = _optional(raw.get("description"))
+        requirements = _optional(raw.get("requirement"))
         work_type_id = _required(raw, "workType", f"NetEase work type ({external_id})")
         try:
             work_type_name = WORK_TYPES[work_type_id]
@@ -350,7 +411,7 @@ def _timestamp_ms(value: Any, field: str) -> datetime | None:
 
 def _locations(names_value: Any, codes_value: Any, external_id: str) -> list[LocationRecord]:
     if not isinstance(names_value, list):
-        raise ValueError(f"NetEase job has no workPlaceNameList: {external_id}")
+        return []
     codes = codes_value if isinstance(codes_value, list) else []
     locations: list[LocationRecord] = []
     seen: set[str] = set()
@@ -364,8 +425,6 @@ def _locations(names_value: Any, codes_value: Any, external_id: str) -> list[Loc
             continue
         seen.add(code)
         locations.append(LocationRecord(code=code, name=name))
-    if not locations:
-        raise ValueError(f"NetEase job has no work location: {external_id}")
     return locations
 
 

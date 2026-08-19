@@ -98,6 +98,6 @@ def test_source_health_reports_latest_non_authoritative_walk() -> None:
         stale_after=timedelta(hours=36),
         clock=clock,
     ).run()["channels"][0]
-    assert channel["reasons"] == ["latest_attempt_non_authoritative"]
+    assert channel["reasons"] == ["latest_attempt_partial"]
     assert channel["consecutive_failures"] == 0
     assert channel["consecutive_non_authoritative"] == 1

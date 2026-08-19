@@ -14,12 +14,46 @@ MAX_ATTEMPTS=${MAX_ATTEMPTS:-2}
 RETRY_DELAY_SECONDS=${RETRY_DELAY_SECONDS:-60}
 MAX_PARALLEL_SOURCES=${MAX_PARALLEL_SOURCES:-2}
 SOURCE_START_DELAY_SECONDS=${SOURCE_START_DELAY_SECONDS:-3}
+CRAWL_LOG_FILE=${CRAWL_LOG_FILE:-}
+LOG_MAX_BYTES=${LOG_MAX_BYTES:-20971520}
+LOG_RETENTION_DAYS=${LOG_RETENTION_DAYS:-14}
+TEE_BIN=${TEE_BIN:-/usr/bin/tee}
+STAT_BIN=${STAT_BIN:-/usr/bin/stat}
+GZIP_BIN=${GZIP_BIN:-/usr/bin/gzip}
+FIND_BIN=${FIND_BIN:-/usr/bin/find}
 
 log_event() {
   local event=$1
   local detail=${2:-}
+  detail=${detail//\/\\}
+  detail=${detail//\"/\\\"}
+  detail=${detail//$'\n'/\\n}
   printf '{"time":"%s","event":"%s","detail":"%s"}\n' \
     "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$event" "$detail"
+}
+
+prepare_log_output() {
+  [[ -z "$CRAWL_LOG_FILE" ]] && return 0
+  local log_dir
+  local current_size=0
+  local rotated_file
+  log_dir=$(dirname "$CRAWL_LOG_FILE")
+  if [[ "$log_dir" != /* || "$log_dir" == "/" ]]; then
+    return 1
+  fi
+  mkdir -p "$log_dir" || return 1
+  if [[ -f "$CRAWL_LOG_FILE" ]]; then
+    current_size=$("$STAT_BIN" --format=%s "$CRAWL_LOG_FILE") || return 1
+  fi
+  if (( current_size >= LOG_MAX_BYTES )); then
+    rotated_file="${CRAWL_LOG_FILE}.$(date -u +%Y%m%dT%H%M%SZ).$$"
+    mv "$CRAWL_LOG_FILE" "$rotated_file" || return 1
+    "$GZIP_BIN" "$rotated_file" || true
+  fi
+  "$FIND_BIN" "$log_dir" -maxdepth 1 -type f \
+    -name "$(basename "$CRAWL_LOG_FILE").*.gz" \
+    -mtime "+${LOG_RETENTION_DAYS}" -delete || true
+  exec > >("$TEE_BIN" -a "$CRAWL_LOG_FILE") 2>&1
 }
 
 if [[ ! -d "$PROJECT_DIR" ]]; then
@@ -31,6 +65,15 @@ cd "$PROJECT_DIR" || exit 1
 exec 9>"$CRAWL_LOCK_FILE"
 if ! "$FLOCK_BIN" --nonblock 9; then
   log_event "batch_preflight_failed" "another_batch_is_running"
+  exit 1
+fi
+if [[ ! "$LOG_MAX_BYTES" =~ ^[1-9][0-9]*$ ]] \
+  || [[ ! "$LOG_RETENTION_DAYS" =~ ^[1-9][0-9]*$ ]]; then
+  log_event "batch_preflight_failed" "invalid_log_retention_configuration"
+  exit 1
+fi
+if ! prepare_log_output; then
+  log_event "batch_preflight_failed" "log_output_unavailable"
   exit 1
 fi
 
@@ -156,6 +199,7 @@ fi
 
 started_at=$SECONDS
 succeeded=()
+partial=()
 failed=()
 log_event \
   "batch_started" \
@@ -165,9 +209,9 @@ run_source_worker() {
   local source=$1
   local attempt=1
   local source_succeeded=false
-  local infrastructure_succeeded=true
   local container_name="${CRAWL_CONTAINER_PREFIX}-${source}"
   local exit_code
+  local final_exit_code=1
 
   while (( attempt <= MAX_ATTEMPTS )); do
     log_event "source_started" "${source}:attempt-${attempt}"
@@ -177,22 +221,25 @@ run_source_worker() {
     fi
     run_source "$source" "$container_name"
     exit_code=$?
+    final_exit_code=$exit_code
     if [[ $exit_code -eq 0 ]]; then
       source_succeeded=true
       log_event "source_succeeded" "${source}:attempt-${attempt}"
       break
     fi
 
-    log_event "source_failed" "${source}:attempt-${attempt}:exit-${exit_code}"
+    if [[ $exit_code -eq 2 ]]; then
+      log_event "source_attempt_partial" "${source}:attempt-${attempt}"
+    else
+      log_event "source_attempt_failed" "${source}:attempt-${attempt}:exit-${exit_code}"
+    fi
     if ! cleanup_source_container "$container_name"; then
-      infrastructure_succeeded=false
-      log_event "source_failed" "${source}:container_cleanup_failed"
+      log_event "source_recovery_warning" "${source}:container_cleanup_failed"
     fi
     if ! run_container recover-runs \
       --source "$source" \
       --older-than-minutes 0; then
-      infrastructure_succeeded=false
-      log_event "source_failed" "${source}:run_recovery_failed"
+      log_event "source_recovery_warning" "${source}:run_recovery_failed"
     fi
     if (( attempt < MAX_ATTEMPTS && RETRY_DELAY_SECONDS > 0 )); then
       sleep "$RETRY_DELAY_SECONDS"
@@ -200,8 +247,11 @@ run_source_worker() {
     ((attempt += 1))
   done
 
-  if [[ "$source_succeeded" == true && "$infrastructure_succeeded" == true ]]; then
+  if [[ "$source_succeeded" == true ]]; then
     return 0
+  fi
+  if [[ $final_exit_code -eq 2 ]]; then
+    return 2
   fi
   return 1
 }
@@ -221,6 +271,7 @@ reap_one_worker() {
   local index
   local pid
   local source
+  local worker_exit_code
   while :; do
     for index in "${!active_pids[@]}"; do
       pid=${active_pids[$index]}
@@ -228,11 +279,13 @@ reap_one_worker() {
       if job_is_running "$pid"; then
         continue
       fi
-      if wait "$pid"; then
-        succeeded+=("$source")
-      else
-        failed+=("source:${source}")
-      fi
+      wait "$pid"
+      worker_exit_code=$?
+      case "$worker_exit_code" in
+        0) succeeded+=("$source") ;;
+        2) partial+=("source:${source}") ;;
+        *) failed+=("source:${source}") ;;
+      esac
       unset 'active_pids[index]'
       unset 'active_sources[index]'
       ((active_count -= 1))
@@ -259,22 +312,43 @@ while (( active_count > 0 )); do
   reap_one_worker
 done
 
-for check in check-runtime check-schema check-data check-source-health; do
-  if run_container "$check"; then
+critical_checks_failed=()
+for check in check-runtime check-schema check-data; do
+  check_output=$(run_container "$check" 2>&1)
+  if [[ $? -eq 0 ]]; then
     log_event "postflight_check_succeeded" "$check"
   else
-    log_event "postflight_check_failed" "$check"
-    failed+=("check:${check}")
+    log_event "postflight_check_failed" "${check}:${check_output:0:2000}"
+    critical_checks_failed+=("check:${check}")
   fi
 done
+health_degraded=false
+health_output=$(run_container check-source-health 2>&1)
+if [[ $? -eq 0 ]]; then
+  log_event "postflight_check_succeeded" "check-source-health"
+else
+  health_degraded=true
+  log_event "postflight_check_degraded" "check-source-health"
+fi
 
 duration=$((SECONDS - started_at))
 succeeded_csv=$(IFS=,; printf '%s' "${succeeded[*]}")
+partial_csv=$(IFS=,; printf '%s' "${partial[*]}")
 failed_csv=$(IFS=,; printf '%s' "${failed[*]}")
+critical_csv=$(IFS=,; printf '%s' "${critical_checks_failed[*]}")
+batch_status=success
+if [[ ${#critical_checks_failed[@]} -gt 0 ]]; then
+  batch_status=failed
+elif [[ ${#partial[@]} -gt 0 || ${#failed[@]} -gt 0 || "$health_degraded" == true ]]; then
+  batch_status=degraded
+fi
 log_event \
   "batch_finished" \
-  "duration_seconds=${duration};succeeded=${succeeded_csv};failed=${failed_csv}"
+  "status=${batch_status};duration_seconds=${duration};succeeded=${succeeded_csv};partial=${partial_csv};failed=${failed_csv};critical=${critical_csv}"
 
-if [[ ${#failed[@]} -gt 0 ]]; then
+if [[ ${#critical_checks_failed[@]} -gt 0 ]]; then
   exit 1
+fi
+if [[ "$batch_status" == degraded ]]; then
+  exit 2
 fi

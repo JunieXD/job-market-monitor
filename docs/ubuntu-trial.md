@@ -37,6 +37,8 @@ sudo install -m 0644 deploy/systemd/job-market-crawl.timer \
   /etc/systemd/system/job-market-crawl.timer
 sudo install -D -m 0644 deploy/systemd/job-market-crawl.vm.conf \
   /etc/systemd/system/job-market-crawl.service.d/compose.conf
+sudo install -m 0644 deploy/logrotate/job-market-monitor \
+  /etc/logrotate.d/job-market-monitor
 sudo systemctl daemon-reload
 sudo systemctl enable --now job-market-crawl.timer
 ```
@@ -45,6 +47,7 @@ sudo systemctl enable --now job-market-crawl.timer
 systemctl list-timers job-market-crawl.timer
 systemctl status job-market-crawl.timer --no-pager
 journalctl -u job-market-crawl.service -n 200 --no-pager
+tail -n 100 /var/log/job-market-monitor/crawl.jsonl
 ```
 
 需要在试运行首日立即开始时：
@@ -53,7 +56,8 @@ journalctl -u job-market-crawl.service -n 200 --no-pager
 sudo systemctl start job-market-crawl.service
 ```
 
-调度脚本使用 `flock` 防止两个批次并发；每个来源有独立超时、重试、清理和失败恢复。
+调度脚本使用 `flock` 防止两个批次并发；每个来源有独立超时、重试、清理和失败恢复。页面或岗位
+局部异常会保存为部分结果，不生成标准快照、不推进岗位关闭；只有完整权威结果参与每日趋势。
 
 ## 观察入口
 

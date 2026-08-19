@@ -29,6 +29,7 @@ from job_market.schemas import (
     BusinessUnitRecord,
     CategoryAssignmentMethod,
     Channel,
+    CollectionIssue,
     CollectionResult,
     JobRecord,
     LocationRecord,
@@ -289,11 +290,45 @@ def test_non_authoritative_run_stores_observations_without_advancing_absence() -
         assert run is not None
         assert job.status == "active"
         assert job.missing_streak == 0
-        assert run.status == "success"
+        assert run.status == "partial"
         assert run.complete is True
         assert run.absence_authoritative is False
         assert session.query(DailySnapshot).count() == 1
         assert session.query(JobLifecycleEvent).count() == 1
+
+
+def test_partial_run_persists_observations_without_standard_snapshot() -> None:
+    repository, _ = make_repository()
+    source_id = repository.ensure_source()
+    run_id = repository.start_run(source_id, Channel.CAMPUS.value)
+    partial_result = result([make_job()], complete=False)
+    partial_result.issues.append(
+        CollectionIssue(
+            scope="page",
+            partition="root",
+            page=2,
+            error_type="SyntheticPageError",
+            message="page remained unavailable after retries",
+            retry_count=2,
+        )
+    )
+
+    stats = repository.ingest(run_id, partial_result)
+
+    assert stats["status"] == "partial"
+    assert stats["canonical"] is False
+    with Session(repository.engine) as session:
+        run = session.get(CrawlRun, run_id)
+        job = session.scalar(select(Job))
+        assert run is not None
+        assert run.status == "partial"
+        assert run.complete is False
+        assert run.absence_authoritative is False
+        assert run.issues[0]["page"] == 2
+        assert job is not None
+        assert job.first_canonical_seen_on is None
+        assert session.query(JobObservation).count() == 1
+        assert session.query(DailySnapshot).count() == 0
 
 
 def test_abandoned_running_run_is_marked_failed() -> None:
@@ -483,13 +518,19 @@ def test_first_fact_contract_upgrade_is_enriched_not_a_market_change() -> None:
         assert job.last_changed_at == first_changed_at
 
 
-def test_incomplete_collection_is_never_ingested() -> None:
+def test_empty_incomplete_collection_is_recorded_without_standard_snapshot() -> None:
     repository, _ = make_repository()
     source_id = repository.ensure_source()
     run_id = repository.start_run(source_id, Channel.CAMPUS.value)
 
-    with pytest.raises(ValueError, match="incomplete"):
-        repository.ingest(run_id, result([], complete=False))
+    stats = repository.ingest(run_id, result([], complete=False))
+
+    assert stats["status"] == "partial"
+    with Session(repository.engine) as session:
+        run = session.get(CrawlRun, run_id)
+        assert run is not None
+        assert run.status == "partial"
+        assert session.query(DailySnapshot).count() == 0
 
 
 def test_source_channel_contract_disables_removed_coverage() -> None:

@@ -6,11 +6,16 @@ Requires=docker.service
 [Service]
 Type=oneshot
 WorkingDirectory=/opt/job-market-monitor
+SuccessExitStatus=2
+LogsDirectory=job-market-monitor
 Environment=SOURCE_TIMEOUT_SECONDS=10800
 Environment=MAX_ATTEMPTS=2
 Environment=RETRY_DELAY_SECONDS=60
 Environment=MAX_PARALLEL_SOURCES=2
 Environment=SOURCE_START_DELAY_SECONDS=3
+Environment=CRAWL_LOG_FILE=/var/log/job-market-monitor/crawl.jsonl
+Environment=LOG_MAX_BYTES=20971520
+Environment=LOG_RETENTION_DAYS=14
 ExecStart=/opt/job-market-monitor/deploy/run-scheduled-crawls.sh
 TimeoutStartSec=23h
 TimeoutStopSec=2m

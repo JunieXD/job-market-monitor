@@ -148,8 +148,7 @@ class DataQualityChecker:
                 observation_counts.c.run_id == CrawlRun.id,
             )
             .where(
-                CrawlRun.status == "success",
-                CrawlRun.complete.is_(True),
+                CrawlRun.status.in_(("success", "partial")),
                 CrawlRun.discovered_count
                 != func.coalesce(observation_counts.c.observed_count, 0),
             )

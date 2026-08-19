@@ -333,8 +333,8 @@ class XiaomiConnector:
     def parse_job(raw: dict[str, Any], portal: PortalConfig) -> JobRecord:
         external_id = _required(raw, "jobPostId", "Xiaomi job id")
         title = _required(raw, "title", f"Xiaomi job title ({external_id})")
-        description = _required(raw, "description", f"Xiaomi job description ({external_id})")
-        requirements = _required(raw, "requirement", f"Xiaomi job requirement ({external_id})")
+        description = _optional(raw.get("description"))
+        requirements = _optional(raw.get("requirement"))
         type_value = raw.get("type")
         if type_value != portal.type_id:
             raise ValueError(
@@ -389,7 +389,7 @@ def _source_date(value: Any) -> datetime | None:
 
 def _locations(value: Any, external_id: str) -> list[LocationRecord]:
     if not isinstance(value, list):
-        raise ValueError(f"Xiaomi job has no cityZhNames: {external_id}")
+        return []
     locations: list[LocationRecord] = []
     seen: set[str] = set()
     for item in value:
@@ -398,6 +398,4 @@ def _locations(value: Any, external_id: str) -> list[LocationRecord]:
             continue
         seen.add(name)
         locations.append(LocationRecord(code=f"city:{name}", name=name))
-    if not locations:
-        raise ValueError(f"Xiaomi job has no work location: {external_id}")
     return locations

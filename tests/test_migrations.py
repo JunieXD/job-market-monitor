@@ -52,13 +52,14 @@ def test_fresh_migrations_match_models_and_create_analysis_views() -> None:
             text("SELECT version_num FROM alembic_version")
         ).scalar_one()
         drift = compare_metadata(MigrationContext.configure(connection), Base.metadata)
-    assert revision == "0014"
+    assert revision == "0015"
     assert drift == []
     columns = {item["name"]: item for item in inspect(engine).get_columns("jobs")}
     run_columns = {
         item["name"]: item for item in inspect(engine).get_columns("crawl_runs")
     }
     assert run_columns["absence_authoritative"]["nullable"] is False
+    assert run_columns["issues"]["nullable"] is False
     assert columns["external_code"]["nullable"] is True
     assert columns["published_at"]["nullable"] is True
     assert columns["is_hot"]["nullable"] is True

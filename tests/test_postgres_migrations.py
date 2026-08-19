@@ -36,7 +36,7 @@ def test_postgres_migrations_match_models_and_views() -> None:
                 MigrationContext.configure(connection),
                 Base.metadata,
             )
-        assert revision == "0014"
+        assert revision == "0015"
         assert drift == []
         columns = {item["name"]: item for item in inspect(engine).get_columns("jobs")}
         assert columns["external_code"]["nullable"] is True

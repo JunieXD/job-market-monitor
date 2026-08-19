@@ -193,6 +193,20 @@ class RawSnapshotRecord(BaseModel):
     captured_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
+class CollectionIssue(BaseModel):
+    """A bounded, structured description of incomplete source coverage."""
+
+    model_config = ConfigDict(frozen=True)
+
+    scope: str = Field(pattern="^(source|partition|page|job)$")
+    error_type: str = Field(min_length=1, max_length=200)
+    message: str = Field(min_length=1, max_length=2000)
+    partition: str | None = Field(default=None, min_length=1, max_length=500)
+    page: int | None = Field(default=None, ge=1)
+    external_id: str | None = Field(default=None, min_length=1, max_length=300)
+    retry_count: int = Field(default=0, ge=0)
+
+
 class CollectionResult(BaseModel):
     channel: Channel
     jobs: list[JobRecord]
@@ -204,12 +218,28 @@ class CollectionResult(BaseModel):
     # may still contain valid observations without being safe evidence that
     # every previously known job absent from the walk has disappeared.
     absence_authoritative: bool = True
+    issues: list[CollectionIssue] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def incomplete_results_cannot_prove_absence(self) -> "CollectionResult":
         if not self.complete:
             self.absence_authoritative = False
+        if len(self.issues) > 100:
+            self.issues = [
+                *self.issues[:99],
+                CollectionIssue(
+                    scope="source",
+                    error_type="IssueLimitReached",
+                    message="More collection issues were observed but omitted from storage",
+                ),
+            ]
         return self
+
+    @property
+    def outcome(self) -> str:
+        if self.complete and self.absence_authoritative:
+            return "success"
+        return "partial"
 
 
 class SourceFieldStatRecord(BaseModel):

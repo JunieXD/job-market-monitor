@@ -221,9 +221,7 @@ class Repository:
                 )
             return len(runs)
 
-    def ingest(self, run_id: str, result: CollectionResult) -> dict[str, int | bool]:
-        if not result.complete:
-            raise ValueError("Refusing to ingest an incomplete collection")
+    def ingest(self, run_id: str, result: CollectionResult) -> dict[str, int | bool | str]:
         now = self._now()
         seen_ids: set[str] = set()
         new_count = 0
@@ -467,13 +465,14 @@ class Repository:
 
             self._add_snapshots(session, run_id, result.snapshots)
             self._add_field_stats(session, run_id, result.jobs)
-            run.status = "success"
+            run.status = result.outcome
             run.finished_at = now
             run.discovered_count = len(result.jobs)
             run.page_count = result.pages_fetched
             run.partition_counts = result.partition_counts
             run.complete = result.complete
             run.absence_authoritative = result.absence_authoritative
+            run.issues = [issue.model_dump(mode="json") for issue in result.issues]
 
             return {
                 "discovered": len(result.jobs),
@@ -485,6 +484,7 @@ class Repository:
                 "canonical": daily_snapshot,
                 "lifecycle_advanced": advances_lifecycle,
                 "absence_authoritative": result.absence_authoritative,
+                "status": result.outcome,
             }
 
     def _lock_ingest_transaction(self, session: Session) -> None:
@@ -502,6 +502,8 @@ class Repository:
         run_id: str,
         error: str,
         snapshots: list[RawSnapshotRecord] | None = None,
+        *,
+        error_type: str | None = None,
     ) -> None:
         snapshots_by_path = {
             snapshot.path: snapshot for snapshot in (snapshots or [])
@@ -512,6 +514,17 @@ class Repository:
                 run.status = "failed"
                 run.finished_at = self._now()
                 run.error = error[:10000]
+                run.issues = [
+                    {
+                        "scope": "source",
+                        "error_type": error_type or "CollectionError",
+                        "message": error.strip().splitlines()[-1][:2000],
+                        "partition": None,
+                        "page": None,
+                        "external_id": None,
+                        "retry_count": 0,
+                    }
+                ]
                 self._add_snapshots(session, run_id, list(snapshots_by_path.values()))
 
     @staticmethod

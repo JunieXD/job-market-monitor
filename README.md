@@ -166,10 +166,19 @@ docker compose run --rm collector check-source-health
 ```bash
 sudo install -m 0644 deploy/systemd/job-market-crawl.service /etc/systemd/system/
 sudo install -m 0644 deploy/systemd/job-market-crawl.timer /etc/systemd/system/
+sudo install -m 0644 deploy/logrotate/job-market-monitor /etc/logrotate.d/
 sudo systemctl daemon-reload
 sudo systemctl enable --now job-market-crawl.timer
 systemctl list-timers job-market-crawl.timer
 ```
+
+采集结果分为完整、部分成功和失败。页面或单条岗位经过有限重试后仍异常时，已验证的岗位观测会
+以部分结果保存，但不会生成当天标准快照，也不会据此关闭缺失岗位。问题明细保存在采集运行记录中，
+日志只记录数量、类型和进度，不记录岗位正文或官网完整响应。
+
+systemd 默认将 JSON 日志同时写入 journald 和
+`/var/log/job-market-monitor/crawl.jsonl`。单文件达到 20MB 时轮转并压缩，最多保留 14 天；Docker
+服务日志限制为每个容器 `3 x 10MB`。
 
 生产 Compose 不会创建 PostgreSQL，而是加入已有的外部 Docker network。部署前需要填写
 `DATABASE_URL` 和 `DATABASE_DOCKER_NETWORK`，完整说明见[部署说明](docs/deployment.md)。

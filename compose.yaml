@@ -1,9 +1,16 @@
 name: job-market-monitor
 
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
+    logging: *default-logging
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-job_market}
       POSTGRES_USER: ${POSTGRES_USER:-job_market}
@@ -23,6 +30,7 @@ services:
       context: .
     init: true
     shm_size: "1gb"
+    logging: *default-logging
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://job_market:change-me-before-deploying@postgres:5432/job_market}
       RAW_DATA_DIR: ${RAW_DATA_DIR:-/data/raw}
@@ -72,6 +80,7 @@ services:
       context: .
     init: true
     restart: unless-stopped
+    logging: *default-logging
     entrypoint: ["uvicorn"]
     command:
       [
@@ -81,6 +90,7 @@ services:
         "0.0.0.0",
         "--port",
         "8000",
+        "--no-access-log",
       ]
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://job_market:change-me-before-deploying@postgres:5432/job_market}
@@ -101,6 +111,7 @@ services:
         API_INTERNAL_URL: http://api:8000
     init: true
     restart: unless-stopped
+    logging: *default-logging
     environment:
       API_INTERNAL_URL: http://api:8000
     ports:

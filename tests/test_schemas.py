@@ -6,6 +6,8 @@ from pydantic import ValidationError
 from job_market.schemas import (
     CategoryAssignmentMethod,
     Channel,
+    CollectionIssue,
+    CollectionResult,
     JobRecord,
     LocationRecord,
     SourceCategoryRecord,
@@ -86,3 +88,52 @@ def test_source_job_may_have_no_structured_location() -> None:
     record = make_record().model_copy(update={"locations": []})
 
     assert record.locations == []
+
+
+def test_incomplete_collection_has_partial_outcome_and_bounded_issue() -> None:
+    result = CollectionResult(
+        channel=Channel.EXPERIENCED,
+        jobs=[make_record()],
+        snapshots=[],
+        partition_counts={"all": 2, "collected-unique": 1},
+        pages_fetched=1,
+        complete=False,
+        issues=[
+            CollectionIssue(
+                scope="page",
+                partition="root",
+                page=2,
+                error_type="PageUnavailable",
+                message="request failed after retries",
+                retry_count=2,
+            )
+        ],
+    )
+
+    assert result.outcome == "partial"
+    assert result.absence_authoritative is False
+
+
+def test_collection_issue_storage_is_bounded() -> None:
+    issues = [
+        CollectionIssue(
+            scope="job",
+            external_id=str(index),
+            error_type="SyntheticError",
+            message="synthetic",
+        )
+        for index in range(150)
+    ]
+
+    result = CollectionResult(
+        channel=Channel.EXPERIENCED,
+        jobs=[],
+        snapshots=[],
+        partition_counts={},
+        pages_fetched=0,
+        complete=False,
+        issues=issues,
+    )
+
+    assert len(result.issues) == 100
+    assert result.issues[-1].error_type == "IssueLimitReached"

@@ -173,7 +173,14 @@ class FakeRepository:
         self.progress.append((run_id, discovered_count, page_count))
         return True
 
-    def fail_run(self, run_id: str, error: str, snapshots: list) -> None:
+    def fail_run(
+        self,
+        run_id: str,
+        error: str,
+        snapshots: list,
+        *,
+        error_type: str | None = None,
+    ) -> None:
         self.failed.append((run_id, error, snapshots))
 
     def due_source_channels(self) -> dict[str, set[str]]:
@@ -201,6 +208,18 @@ class SuccessfulConnector:
 class TimeoutConnector(SuccessfulConnector):
     async def collect(self, channel: Channel, *, max_pages: int | None):
         raise TimeoutError("synthetic timeout")
+
+
+class PartialConnector(SuccessfulConnector):
+    async def collect(self, channel: Channel, *, max_pages: int | None):
+        return CollectionResult(
+            channel=channel,
+            jobs=[],
+            snapshots=[],
+            partition_counts={"all": 1, "collected-unique": 0},
+            pages_fetched=1,
+            complete=False,
+        )
 
 
 async def run_crawl_case(
@@ -331,6 +350,22 @@ async def test_browser_startup_failure_records_failed_run(monkeypatch, tmp_path:
     assert repository.failed[0][0] == "run-experienced"
     assert "browser unavailable" in repository.failed[0][1]
     assert state == ["chromium.launch", "playwright.stop"]
+
+
+async def test_partial_channel_is_persisted_and_returns_degraded_status(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    exit_code, repository, state = await run_crawl_case(
+        monkeypatch,
+        tmp_path,
+        PartialConnector,
+    )
+
+    assert exit_code == 2
+    assert repository.ingested == ["run-experienced"]
+    assert repository.failed == []
+    assert state[-3:] == ["context.close", "browser.close", "playwright.stop"]
 
 
 async def test_cleanup_error_does_not_override_successful_run(

@@ -1,6 +1,8 @@
 import json
+from copy import deepcopy
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -73,3 +75,45 @@ def test_meituan_rejects_unexpected_page_size() -> None:
 
     with pytest.raises(RuntimeError, match="page size changed"):
         MeituanConnector._position_page(payload, expected_page=1)
+
+
+def test_meituan_preserves_job_without_optional_text_or_location() -> None:
+    raw = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    raw.pop("jobDuty")
+    raw.pop("jobRequirement")
+    raw.pop("cityList")
+
+    record = MeituanConnector.parse_job(raw, PORTALS[Channel.EXPERIENCED])
+
+    assert record.description is None
+    assert record.requirements is None
+    assert record.locations == []
+
+
+async def test_meituan_dynamic_list_returns_partial_observations() -> None:
+    raw = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    payload = {
+        "data": {
+            "list": [raw, deepcopy(raw)],
+            "page": {"pageNo": 1, "pageSize": 200, "totalPage": 1, "totalCount": 2},
+        }
+    }
+    connector = MeituanConnector(
+        None,
+        SimpleNamespace(meituan_request_delay_seconds=0.5),
+    )
+
+    async def same_page(portal, page_number):
+        return payload
+
+    connector._fetch_page = same_page
+    jobs, _, complete, _ = await connector._collect_root(
+        PORTALS[Channel.EXPERIENCED],
+        payload,
+        2,
+        None,
+    )
+
+    assert complete is False
+    assert len(jobs) == 1
+    assert connector.issues[-1].error_type == "DynamicListDidNotConverge"

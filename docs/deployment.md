@@ -72,7 +72,8 @@ docker compose run --rm collector crawl \
 ## systemd 定时任务
 
 批量脚本会读取当天尚未生成标准快照的来源，并为每个来源独立创建临时采集容器。单个来源失败会
-被记录并继续运行后续来源；批次末尾会执行统一检查，任何失败都会让 service 返回非零状态。
+被记录并继续运行后续来源；批次末尾会执行统一检查。来源部分成功或失败会让批次以降级状态结束，
+但 systemd 仍视为已正常完成调度；数据库结构、磁盘或数据一致性检查失败才会让 service 失败。
 当天已经完成全部渠道的来源自动跳过，因此 timer 重启或重复触发不会重复采集完整来源。
 
 默认最多并发 2 个来源，来源启动间隔 3 秒。并发只跨来源发生，同一来源的多个渠道仍按顺序执行；
@@ -84,6 +85,8 @@ sudo install -m 0644 deploy/systemd/job-market-crawl.service \
   /etc/systemd/system/job-market-crawl.service
 sudo install -m 0644 deploy/systemd/job-market-crawl.timer \
   /etc/systemd/system/job-market-crawl.timer
+sudo install -m 0644 deploy/logrotate/job-market-monitor \
+  /etc/logrotate.d/job-market-monitor
 sudo systemctl daemon-reload
 sudo systemctl enable --now job-market-crawl.timer
 ```
@@ -93,7 +96,12 @@ sudo systemctl enable --now job-market-crawl.timer
 ```bash
 systemctl list-timers job-market-crawl.timer
 journalctl -u job-market-crawl.service -n 200 --no-pager
+tail -n 100 /var/log/job-market-monitor/crawl.jsonl
 ```
+
+采集日志为一行一个 JSON 事件，记录批次、来源、渠道、重试、每分钟进度、结果、耗时和流量汇总。
+完整 traceback 与最多 100 条结构化问题明细保存在 `crawl_runs`，日志不写岗位正文和响应 payload。
+专用日志单文件上限 20MB、保留 14 天并压缩；Docker `json-file` 日志另有每容器 30MB 上限。
 
 需要立即开始一次真实采集时，可以手工启动同一个 oneshot 服务；该操作仍受文件锁和当日完成状态保护：
 

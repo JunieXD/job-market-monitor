@@ -40,3 +40,16 @@ def test_tencent_rejects_more_rows_than_the_official_page_size() -> None:
 
     with pytest.raises(RuntimeError, match="exceeds UI page size"):
         TencentConnector._search_page(payload, expected_page=1)
+
+
+def test_tencent_preserves_job_without_optional_text_or_location() -> None:
+    raw = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    raw.pop("desc")
+    raw.pop("request")
+    raw.pop("workCityList")
+
+    record = TencentConnector.parse_job(raw)
+
+    assert record.description is None
+    assert record.requirements is None
+    assert record.locations == []

@@ -26,6 +26,7 @@ from job_market.raw_store import RawStore
 from job_market.schemas import (
     CategoryAssignmentMethod,
     Channel,
+    CollectionIssue,
     CollectionResult,
     JobRecord,
     LocationRecord,
@@ -71,6 +72,7 @@ class AlibabaTaoTianConnector:
         self._last_request_at = 0.0
         self._category_responses: JsonResponseQueue = asyncio.Queue()
         self._position_responses: JsonResponseQueue = asyncio.Queue()
+        self.issues: list[CollectionIssue] = []
         self.page.on("response", self._record_response)
 
     async def collect(
@@ -110,11 +112,6 @@ class AlibabaTaoTianConnector:
             max_pages,
         )
         del payload
-        if complete and len(jobs_by_id) != total:
-            raise RuntimeError(
-                f"TaoTian root count mismatch: declared={total}, unique={len(jobs_by_id)}"
-            )
-
         memberships: dict[str, list[SourceCategoryRecord]] = {
             external_id: [] for external_id in jobs_by_id
         }
@@ -139,6 +136,7 @@ class AlibabaTaoTianConnector:
             partition_counts=partition_counts,
             pages_fetched=self.pages_fetched,
             complete=complete,
+            issues=self.issues,
         )
 
     async def _open_portal(self) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -174,18 +172,64 @@ class AlibabaTaoTianConnector:
             if not rows:
                 raise RuntimeError(f"TaoTian returned an empty root page at offset {offset}")
             for raw in rows:
-                record = self.parse_job(raw)
-                if record.external_id in jobs_by_id:
-                    raise RuntimeError(
-                        f"TaoTian root pagination repeated job {record.external_id}"
+                try:
+                    record = self.parse_job(raw)
+                except (TypeError, ValueError) as exc:
+                    self.issues.append(
+                        CollectionIssue(
+                            scope="job",
+                            partition="all",
+                            page=offset // UI_PAGE_SIZE + 1,
+                            external_id=str(raw.get("id") or "").strip() or None,
+                            error_type=type(exc).__name__,
+                            message=str(exc) or "TaoTian job parsing failed",
+                        )
                     )
-                jobs_by_id[record.external_id] = record
+                    continue
+                previous = jobs_by_id.get(record.external_id)
+                if previous is None:
+                    jobs_by_id[record.external_id] = record
+                elif previous.content_hash() != record.content_hash():
+                    self.issues.append(
+                        CollectionIssue(
+                            scope="job",
+                            partition="all",
+                            external_id=record.external_id,
+                            error_type="JobChangedDuringPagination",
+                            message="TaoTian job changed while the root list was paginated",
+                        )
+                    )
             offset += len(rows)
             if offset < total:
                 if max_pages is not None and self.pages_fetched >= max_pages:
                     return False, payload
-                payload = await self._next_page("all", offset)
-        return True, payload
+                try:
+                    payload = await self._next_page("all", offset)
+                except Exception as exc:
+                    self.issues.append(
+                        CollectionIssue(
+                            scope="page",
+                            partition="all",
+                            page=offset // UI_PAGE_SIZE + 1,
+                            error_type=type(exc).__name__,
+                            message=str(exc) or "TaoTian list page remained unavailable",
+                        )
+                    )
+                    return False, payload
+        complete = len(jobs_by_id) == total and not self.issues
+        if not complete:
+            self.issues.append(
+                CollectionIssue(
+                    scope="partition",
+                    partition="all",
+                    error_type="DynamicListDidNotConverge",
+                    message=(
+                        "TaoTian root count mismatch: "
+                        f"declared={total}, unique={len(jobs_by_id)}"
+                    ),
+                )
+            )
+        return complete, payload
 
     async def _collect_category_memberships(
         self,
@@ -197,6 +241,7 @@ class AlibabaTaoTianConnector:
         max_pages: int | None,
     ) -> bool:
         previous: TaoTianCategory | None = None
+        all_categories_complete = True
         for category in categories:
             if max_pages is not None and self.pages_fetched >= max_pages:
                 return False
@@ -212,6 +257,7 @@ class AlibabaTaoTianConnector:
             partition_counts[category.partition] = total
             offset = 0
             seen_ids: set[str] = set()
+            category_problem_types: set[str] = set()
             while offset < total:
                 if max_pages is not None and self.pages_fetched >= max_pages:
                     return False
@@ -224,35 +270,60 @@ class AlibabaTaoTianConnector:
                         f"{category.name} offset={offset}"
                     )
                 for raw in rows:
-                    candidate = self.parse_job(raw)
+                    try:
+                        candidate = self.parse_job(raw)
+                    except (TypeError, ValueError):
+                        category_problem_types.add("job_parse_error")
+                        continue
                     stored = jobs_by_id.get(candidate.external_id)
                     if stored is None:
-                        raise RuntimeError(
-                            "TaoTian category query returned a job absent from the root "
-                            f"snapshot: {candidate.external_id}"
-                        )
+                        category_problem_types.add("job_absent_from_root")
+                        continue
                     if candidate.content_hash() != stored.content_hash():
-                        raise RuntimeError(
-                            "TaoTian job changed while category memberships were collected: "
-                            f"{candidate.external_id}"
-                        )
+                        category_problem_types.add("job_changed_during_membership_walk")
                     if candidate.external_id in seen_ids:
-                        raise RuntimeError(
-                            f"TaoTian category repeated job {candidate.external_id}"
-                        )
+                        category_problem_types.add("repeated_job")
+                        continue
                     seen_ids.add(candidate.external_id)
                     memberships[candidate.external_id].append(category.assignment())
                 offset += len(rows)
                 if offset < total:
                     if max_pages is not None and self.pages_fetched >= max_pages:
                         return False
-                    payload = await self._next_page(category.partition, offset)
+                    try:
+                        payload = await self._next_page(category.partition, offset)
+                    except Exception as exc:
+                        category_problem_types.add("page_unavailable")
+                        self.issues.append(
+                            CollectionIssue(
+                                scope="page",
+                                partition=category.partition,
+                                page=offset // UI_PAGE_SIZE + 1,
+                                error_type=type(exc).__name__,
+                                message=(
+                                    str(exc)
+                                    or "TaoTian category page remained unavailable"
+                                ),
+                            )
+                        )
+                        break
             if len(seen_ids) != total:
-                raise RuntimeError(
-                    "TaoTian category count mismatch: "
-                    f"{category.name} declared={total}, unique={len(seen_ids)}"
+                category_problem_types.add("count_mismatch")
+            if category_problem_types:
+                all_categories_complete = False
+                self.issues.append(
+                    CollectionIssue(
+                        scope="partition",
+                        partition=category.partition,
+                        error_type="CategoryMembershipIncomplete",
+                        message=(
+                            f"TaoTian category {category.name!r} was incomplete: "
+                            f"declared={total}, unique={len(seen_ids)}, "
+                            f"problems={','.join(sorted(category_problem_types))}"
+                        ),
+                    )
                 )
-        return True
+        return all_categories_complete
 
     async def _set_category(
         self,
@@ -411,18 +482,15 @@ class AlibabaTaoTianConnector:
     def parse_job(raw: dict[str, Any]) -> JobRecord:
         external_id = str(raw.get("id") or "").strip()
         title = str(raw.get("name") or "").strip()
-        description = str(raw.get("description") or "").strip()
-        requirements = str(raw.get("requirement") or "").strip()
-        if not external_id or not title or not description or not requirements:
+        description = str(raw.get("description") or "").strip() or None
+        requirements = str(raw.get("requirement") or "").strip() or None
+        if not external_id or not title:
             raise ValueError(f"TaoTian job is missing a required fact: {raw.get('id')!r}")
 
         locations = [
             LocationRecord(code=f"city:{name}", name=name)
             for name in unique_strings(raw.get("workLocations"), "workLocations")
         ]
-        if not locations:
-            raise ValueError(f"TaoTian job has no work location: {external_id}")
-
         degree_code, degree_name = coded_label(raw.get("degree"), "degree")
         department_code, department_name = coded_label(
             raw.get("department"),

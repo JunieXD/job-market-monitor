@@ -15,11 +15,13 @@ from job_market.connectors.browser_json import (
     enqueue_json_response,
     next_json_payload,
 )
+from job_market.observability import log_event
 from job_market.raw_store import RawStore
 from job_market.schemas import (
     BusinessUnitRecord,
     CategoryAssignmentMethod,
     Channel,
+    CollectionIssue,
     CollectionResult,
     JobRecord,
     LocationRecord,
@@ -51,6 +53,7 @@ class TencentConnector:
         self._search_responses: JsonResponseQueue = asyncio.Queue()
         self._detail_responses: JsonResponseQueue = asyncio.Queue()
         self.page.on("response", self._record_response)
+        self.issues: list[CollectionIssue] = []
 
     async def collect(
         self,
@@ -78,18 +81,62 @@ class TencentConnector:
             self.pages_fetched += 1
             self._save_list_payload(channel, page_number, payload)
             for raw in current["rows"]:
-                post_id = _required(raw, "postId", "Tencent list post id")
+                post_id = _optional(raw.get("postId"))
+                if post_id is None:
+                    complete = False
+                    self.issues.append(
+                        CollectionIssue(
+                            scope="job",
+                            partition="all",
+                            page=page_number,
+                            error_type="MissingJobIdentifier",
+                            message="Tencent list row has no postId",
+                        )
+                    )
+                    continue
                 if post_id in seen_post_ids:
-                    raise RuntimeError(f"Tencent list repeated post id {post_id}")
+                    complete = False
+                    self.issues.append(
+                        CollectionIssue(
+                            scope="job",
+                            partition="all",
+                            page=page_number,
+                            external_id=post_id,
+                            error_type="RepeatedJob",
+                            message="Tencent list repeated a job during pagination",
+                        )
+                    )
+                    continue
                 seen_post_ids.add(post_id)
                 list_rows.append(raw)
             if page_number < total_pages:
-                payload = await self._next_search_page(page_number + 1)
+                try:
+                    payload = await self._next_search_page(page_number + 1)
+                except Exception as exc:
+                    complete = False
+                    self.issues.append(
+                        CollectionIssue(
+                            scope="page",
+                            partition="all",
+                            page=page_number + 1,
+                            error_type=type(exc).__name__,
+                            message=str(exc) or "Tencent list page remained unavailable",
+                        )
+                    )
+                    break
 
         if complete and len(list_rows) != total_count:
-            raise RuntimeError(
-                "Tencent pagination count mismatch: "
-                f"declared={total_count}, unique={len(list_rows)}"
+            complete = False
+            self.issues.append(
+                CollectionIssue(
+                    scope="partition",
+                    partition="all",
+                    error_type="DynamicListDidNotConverge",
+                    message=(
+                        "Tencent pagination count mismatch: "
+                        f"declared={total_count}, unique={len(list_rows)}"
+                    ),
+                )
             )
 
         detail_results = await self._collect_details(list_rows)
@@ -98,6 +145,8 @@ class TencentConnector:
             post_id = record.external_id
             self._save_detail_payload(channel, post_id, index, detail_payload)
             jobs.append(record)
+        if len(detail_results) != len(list_rows):
+            complete = False
 
         return CollectionResult(
             channel=channel,
@@ -106,6 +155,7 @@ class TencentConnector:
             partition_counts={"all": total_count},
             pages_fetched=self.pages_fetched,
             complete=complete,
+            issues=self.issues,
         )
 
     async def _open_all_positions(self) -> dict[str, Any]:
@@ -190,20 +240,36 @@ class TencentConnector:
                 if item is None:
                     return
                 index, list_row = item
-                post_id = _required(list_row, "postId", "Tencent list post id")
-                payload = await self._open_detail(page, queue, post_id)
-                record = self.parse_job(payload["data"])
-                if record.external_id != post_id:
-                    raise RuntimeError(
-                        "Tencent detail mismatch: "
-                        f"requested={post_id}, got={record.external_id}"
+                post_id = _optional(list_row.get("postId")) or f"list-index-{index}"
+                try:
+                    payload = await self._open_detail(page, queue, post_id)
+                    record = self.parse_job(payload["data"])
+                    if record.external_id != post_id:
+                        raise RuntimeError(
+                            "Tencent detail mismatch: "
+                            f"requested={post_id}, got={record.external_id}"
+                        )
+                    list_title = _optional(list_row.get("positionTitle"))
+                    if list_title is not None and list_title != record.title:
+                        raise RuntimeError(
+                            f"Tencent title changed between list and detail for {post_id}"
+                        )
+                    results[index] = (record, payload)
+                except Exception as exc:
+                    self.issues.append(
+                        CollectionIssue(
+                            scope="job",
+                            partition="detail",
+                            external_id=post_id,
+                            error_type=type(exc).__name__,
+                            message=str(exc) or "Tencent detail collection failed",
+                            retry_count=(
+                                DETAIL_OPEN_ATTEMPTS - 1
+                                if isinstance(exc, BrowserResponseUnavailableError)
+                                else 0
+                            ),
+                        )
                     )
-                list_title = _optional(list_row.get("positionTitle"))
-                if list_title is not None and list_title != record.title:
-                    raise RuntimeError(
-                        f"Tencent title changed between list and detail for {post_id}"
-                    )
-                results[index] = (record, payload)
 
         try:
             await asyncio.gather(*(worker(page, queue) for page, queue in workers))
@@ -213,8 +279,6 @@ class TencentConnector:
                 return_exceptions=True,
             )
 
-        if any(result is None for result in results):
-            raise RuntimeError("Tencent detail collection finished with missing results")
         return [result for result in results if result is not None]
 
     async def _open_detail(
@@ -232,6 +296,16 @@ class TencentConnector:
                         f"Tencent detail {post_id} did not load after "
                         f"{DETAIL_OPEN_ATTEMPTS} attempts"
                     ) from exc
+                log_event(
+                    "request_retry",
+                    level="warning",
+                    source=self.source_key,
+                    operation=f"detail:{post_id}",
+                    attempt=attempt,
+                    max_attempts=DETAIL_OPEN_ATTEMPTS,
+                    error_type=type(exc).__name__,
+                    error=str(exc),
+                )
         raise AssertionError("unreachable")
 
     async def _open_detail_once(
@@ -368,8 +442,8 @@ class TencentConnector:
     def parse_job(raw: dict[str, Any]) -> JobRecord:
         external_id = _required(raw, "postId", "Tencent job id")
         title = _required(raw, "title", f"Tencent job title ({external_id})")
-        description = _required(raw, "desc", f"Tencent job description ({external_id})")
-        requirements = _required(raw, "request", f"Tencent job requirement ({external_id})")
+        description = _optional(raw.get("desc"))
+        requirements = _optional(raw.get("request"))
         employment_type_id = _required(
             raw,
             "recruitType",
@@ -445,7 +519,7 @@ def _unique_strings(value: Any) -> list[str]:
 
 def _locations(names_value: Any, codes_value: Any, external_id: str) -> list[LocationRecord]:
     if not isinstance(names_value, list):
-        raise ValueError(f"Tencent job has no workCityList: {external_id}")
+        return []
     codes = []
     if isinstance(codes_value, str):
         codes = [part.strip() for part in codes_value.split(",") if part.strip()]
@@ -464,8 +538,6 @@ def _locations(names_value: Any, codes_value: Any, external_id: str) -> list[Loc
             continue
         seen.add(code)
         locations.append(LocationRecord(code=code, name=name))
-    if not locations:
-        raise ValueError(f"Tencent job has no work location: {external_id}")
     return locations
 
 

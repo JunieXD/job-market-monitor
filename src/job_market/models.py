@@ -93,6 +93,10 @@ class CrawlRun(Base):
     __tablename__ = "crawl_runs"
     __table_args__ = (
         Index("ix_crawl_runs_source_channel_date", "source_id", "channel", "snapshot_date"),
+        CheckConstraint(
+            "status IN ('running', 'success', 'partial', 'failed')",
+            name="ck_crawl_runs_status",
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
@@ -111,6 +115,7 @@ class CrawlRun(Base):
         default=False,
         nullable=False,
     )
+    issues: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
     error: Mapped[str | None] = mapped_column(Text)
 
 

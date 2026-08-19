@@ -98,6 +98,8 @@ class SourceHealthChecker:
         reasons: list[str] = []
         if latest is None:
             reasons.append("never_attempted")
+        elif latest.status == "partial":
+            reasons.append("latest_attempt_partial")
         elif latest.status != "success" or not latest.complete:
             reasons.append(f"latest_attempt_{latest.status}")
         elif not latest.absence_authoritative:
@@ -118,7 +120,7 @@ class SourceHealthChecker:
 
         consecutive_failures = 0
         for run in runs:
-            if run.status == "success" and run.complete is True:
+            if run.status != "failed":
                 break
             consecutive_failures += 1
 

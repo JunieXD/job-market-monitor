@@ -1,3 +1,4 @@
+import json
 import os
 import subprocess
 from pathlib import Path
@@ -65,6 +66,9 @@ case "$command_name" in
     if [[ "$source_name" == "alpha" && "$FAIL_MODE" == "always" ]]; then
       exit 1
     fi
+    if [[ "$source_name" == "alpha" && "$FAIL_MODE" == "partial" ]]; then
+      exit 2
+    fi
     if [[ "$source_name" == "alpha" && "$FAIL_MODE" == "once" && ! -e "$FAKE_STATE" ]]; then
       : > "$FAKE_STATE"
       exit 1
@@ -73,6 +77,9 @@ case "$command_name" in
   recover-runs)
     if [[ -n "$source_name" ]]; then
       printf 'recover:%s\\n' "$source_name" >> "$FAKE_LOG"
+    fi
+    if [[ "$RECOVERY_FAIL" == "true" && -n "$source_name" ]]; then
+      exit 1
     fi
     ;;
 esac
@@ -135,6 +142,7 @@ def _run_scheduler(
         "TIMEOUT_SOURCE": timeout_source,
         "FAKE_SOURCES": fake_sources,
         "TRACE_CONCURRENCY": str(trace_concurrency).lower(),
+        "RECOVERY_FAIL": os.getenv("RECOVERY_FAIL", "false"),
         "CRAWL_SLEEP_SECONDS": "0.2",
         "MAX_ATTEMPTS": str(attempts),
         "MAX_PARALLEL_SOURCES": str(max_parallel),
@@ -164,7 +172,7 @@ def test_scheduler_retries_failed_source_then_continues(tmp_path) -> None:
 def test_scheduler_attempts_later_sources_before_reporting_failure(tmp_path) -> None:
     result, calls = _run_scheduler(tmp_path, fail_mode="always", attempts=1)
 
-    assert result.returncode == 1
+    assert result.returncode == 2
     assert calls == ["alpha", "recover:alpha", "beta"]
     assert "source:alpha" in result.stdout
 
@@ -177,13 +185,21 @@ def test_scheduler_removes_timed_out_container_then_continues(tmp_path) -> None:
         timeout_source="alpha",
     )
 
-    assert result.returncode == 1
+    assert result.returncode == 2
     assert calls == [
         "cleanup:job-market-monitor-crawl-alpha",
         "recover:alpha",
         "beta",
     ]
     assert "source:alpha" in result.stdout
+
+
+def test_scheduler_reports_partial_source_as_degraded(tmp_path) -> None:
+    result, calls = _run_scheduler(tmp_path, fail_mode="partial", attempts=1)
+
+    assert result.returncode == 2
+    assert calls == ["alpha", "recover:alpha", "beta"]
+    assert "partial=source:alpha" in result.stdout
 
 
 def test_scheduler_runs_sources_up_to_configured_parallelism(tmp_path) -> None:
@@ -220,13 +236,25 @@ def test_scheduler_failure_isolated_when_sources_run_in_parallel(tmp_path) -> No
         fake_sources="alpha\nbeta\ngamma\n",
     )
 
-    assert result.returncode == 1
+    assert result.returncode == 2
     assert {call for call in calls if not call.startswith("recover:")} == {
         "alpha",
         "beta",
         "gamma",
     }
     assert "source:alpha" in result.stdout
+
+
+def test_scheduler_success_after_retry_ignores_recovery_warning(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("RECOVERY_FAIL", "true")
+    result, calls = _run_scheduler(tmp_path, fail_mode="once", attempts=2)
+
+    assert result.returncode == 0
+    assert calls == ["alpha", "recover:alpha", "alpha", "beta"]
+    assert "source_recovery_warning" in result.stdout
 
 
 def test_scheduler_rejects_invalid_parallelism(tmp_path) -> None:
@@ -240,3 +268,22 @@ def test_scheduler_rejects_invalid_parallelism(tmp_path) -> None:
     assert result.returncode == 1
     assert calls == []
     assert "max_parallel_sources_must_be_a_positive_integer" in result.stdout
+
+
+def test_scheduler_writes_bounded_file_log(tmp_path, monkeypatch) -> None:
+    log_file = tmp_path / "logs" / "crawl.jsonl"
+    monkeypatch.setenv("CRAWL_LOG_FILE", str(log_file))
+    monkeypatch.setenv("LOG_MAX_BYTES", "1024")
+    monkeypatch.setenv("LOG_RETENTION_DAYS", "2")
+
+    result, _ = _run_scheduler(
+        tmp_path,
+        fail_mode="never",
+        attempts=1,
+        fake_sources="alpha\n",
+    )
+
+    assert result.returncode == 0
+    events = [json.loads(line) for line in log_file.read_text().splitlines()]
+    assert events[0]["event"] == "batch_started"
+    assert events[-1]["event"] == "batch_finished"
