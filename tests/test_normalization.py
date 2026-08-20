@@ -46,6 +46,8 @@ def test_city_name_normalization_does_not_invent_a_city_from_regions() -> None:
     assert normalize_city_name("全国") == "全国"
     assert is_city_level_name("四川省") is False
     assert is_city_level_name("全国") is False
+    assert normalize_city_names("/") == []
+    assert is_city_level_name("/") is False
     assert is_city_level_name("四川省·成都") is True
 
 

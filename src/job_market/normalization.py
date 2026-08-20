@@ -141,6 +141,10 @@ def normalize_city_names(name: str) -> list[str]:
     """
 
     normalized = _normalize_text(name)
+    # Placeholder-only labels such as "/" are source facts, but they do not
+    # identify a city and must not become a displayed city dimension.
+    if normalized and not any(char.isalnum() for char in normalized):
+        return []
     if not any("\u4e00" <= char <= "\u9fff" for char in normalized):
         return [normalized] if normalized else []
 
