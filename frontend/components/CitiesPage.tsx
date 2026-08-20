@@ -8,7 +8,7 @@ import { MultiSelectFilter } from "@/components/MultiSelectFilter";
 import { Pagination } from "@/components/Pagination";
 import { SelectField } from "@/components/SelectField";
 import { CoverageNotice, EmptyState, ErrorNotice, LoadingBlock, PageHeader, Panel, RefreshButton, TableWrap } from "@/components/ui";
-import { type CityRow, type CompanyMeta, type Envelope, formatNumber, formatPercent, getCachedJson, getJson } from "@/lib/api";
+import { type CityRow, type CompanyMeta, type Envelope, formatNumber, formatPercent, getCachedJson, getJson, getStoredJson } from "@/lib/api";
 import { channelOptions } from "@/lib/labels";
 
 type GroupedCity = { key: string; name: string; postingCount: number; companies: number; share: number };
@@ -27,8 +27,8 @@ export function CitiesPage() {
       channel: channel === "all" ? undefined : channel,
       company_keys: companyKeys === null ? undefined : companyKeys.length ? companyKeys : ["__none__"],
     };
-    const cachedCompanies = getCachedJson<{ data: CompanyMeta[] }>("/api/v1/meta/companies");
-    const cachedResult = getCachedJson<Envelope<CityRow>>("/api/v1/distributions/cities", params);
+    const cachedCompanies = getStoredJson<{ data: CompanyMeta[] }>("/api/v1/meta/companies");
+    const cachedResult = getStoredJson<Envelope<CityRow>>("/api/v1/distributions/cities", params);
     if (cachedCompanies) setCompanies(cachedCompanies.data);
     if (cachedResult) setResult(cachedResult);
     setLoading(!cachedResult); setError(null);

@@ -174,6 +174,7 @@ export async function getJson<T>(
       if (!response.ok) throw new Error(`API 请求失败（${response.status}）`);
       const payload = await response.json() as T;
       responseCache.set(url, payload);
+      persistJson(url, payload);
       return payload;
     })
     .finally(() => pendingRequests.delete(url));
@@ -188,11 +189,35 @@ export function getCachedJson<T>(
   return (responseCache.get(buildUrl(path, params)) as T | undefined) ?? null;
 }
 
+export function getStoredJson<T>(
+  path: string,
+  params?: Record<string, string | number | string[] | null | undefined>,
+): T | null {
+  const url = buildUrl(path, params);
+  const memoryValue = responseCache.get(url) as T | undefined;
+  if (memoryValue !== undefined) return memoryValue;
+  const stored = readPersistentCache();
+  const entry = stored[url];
+  if (!entry) return null;
+  if (
+    typeof entry !== "object"
+    || typeof entry.savedAt !== "number"
+    || !("payload" in entry)
+    || Date.now() - entry.savedAt > maxCacheAge(url)
+  ) {
+    delete stored[url];
+    writePersistentCache(stored);
+    return null;
+  }
+  responseCache.set(url, entry.payload);
+  return entry.payload as T;
+}
+
 export async function prefetchJson(
   path: string,
   params?: Record<string, string | number | string[] | null | undefined>,
 ): Promise<void> {
-  if (getCachedJson(path, params) !== null) return;
+  if (getStoredJson(path, params) !== null) return;
   await getJson(path, params).then(() => undefined).catch(() => undefined);
 }
 
@@ -213,6 +238,59 @@ function buildUrl(
 
 const responseCache = new Map<string, unknown>();
 const pendingRequests = new Map<string, Promise<unknown>>();
+const persistentCacheKey = "job-market-monitor:api-cache:v1";
+const persistentCacheLimit = 32;
+const analyticsCacheMaxAgeMs = 24 * 60 * 60 * 1_000;
+const collectionCacheMaxAgeMs = 30_000;
+
+type PersistentCache = Record<string, { savedAt: number; payload: unknown }>;
+
+function maxCacheAge(url: string): number {
+  return url.startsWith("/api/v1/collection/status")
+    ? collectionCacheMaxAgeMs
+    : analyticsCacheMaxAgeMs;
+}
+
+function readPersistentCache(): PersistentCache {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = window.sessionStorage.getItem(persistentCacheKey);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as PersistentCache;
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    clearPersistentCache();
+    return {};
+  }
+}
+
+function writePersistentCache(cache: PersistentCache): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.setItem(persistentCacheKey, JSON.stringify(cache));
+  } catch {
+    clearPersistentCache();
+  }
+}
+
+function clearPersistentCache(): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.removeItem(persistentCacheKey);
+  } catch {
+    return;
+  }
+}
+
+function persistJson(url: string, payload: unknown): void {
+  const stored = readPersistentCache();
+  stored[url] = { savedAt: Date.now(), payload };
+  const overflow = Object.entries(stored)
+    .sort(([, left], [, right]) => right.savedAt - left.savedAt)
+    .slice(persistentCacheLimit);
+  overflow.forEach(([key]) => { delete stored[key]; });
+  writePersistentCache(stored);
+}
 
 export function formatNumber(value: number | undefined): string {
   return new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 1 }).format(value ?? 0);

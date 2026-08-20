@@ -1,6 +1,5 @@
 "use client";
 
-import { useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
@@ -26,15 +25,6 @@ const navigation = [
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  useEffect(() => {
-    const preload = () => navigation.forEach(({ href }) => prefetchRouteData(href));
-    if (typeof window.requestIdleCallback === "function") {
-      const handle = window.requestIdleCallback(preload, { timeout: 2_000 });
-      return () => window.cancelIdleCallback(handle);
-    }
-    const handle = window.setTimeout(preload, 800);
-    return () => window.clearTimeout(handle);
-  }, []);
   return (
     <div className="app-shell">
       <header className="site-header">
@@ -54,6 +44,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   className={`nav-link ${active ? "active" : ""}`}
                   onMouseEnter={() => prefetchRouteData(href)}
                   onFocus={() => prefetchRouteData(href)}
+                  onPointerDown={() => prefetchRouteData(href)}
                 >
                   <Icon size={16} />
                   <span>{label}</span>

@@ -9,7 +9,7 @@ import { MultiSelectFilter } from "@/components/MultiSelectFilter";
 import { Pagination } from "@/components/Pagination";
 import { SearchField } from "@/components/SearchField";
 import { ChannelTag, CoverageNotice, EmptyState, ErrorNotice, LoadingBlock, PageHeader, Panel, RefreshButton, TableWrap } from "@/components/ui";
-import { type CompanyMeta, type Envelope, formatNumber, getCachedJson, getJson, type JobRow } from "@/lib/api";
+import { type CompanyMeta, type Envelope, formatNumber, getCachedJson, getJson, getStoredJson, type JobRow } from "@/lib/api";
 import { channelOptions } from "@/lib/labels";
 
 const searchScopes = [
@@ -43,8 +43,8 @@ export function JobsPage() {
       limit: pageSize,
       offset: (page - 1) * pageSize,
     };
-    const cachedJobs = getCachedJson<Envelope<JobRow>>("/api/v1/jobs", params);
-    const cachedCompanies = getCachedJson<{ data: CompanyMeta[] }>("/api/v1/meta/companies");
+    const cachedJobs = getStoredJson<Envelope<JobRow>>("/api/v1/jobs", params);
+    const cachedCompanies = getStoredJson<{ data: CompanyMeta[] }>("/api/v1/meta/companies");
     if (cachedJobs) setResult(cachedJobs);
     if (cachedCompanies) setCompanies(cachedCompanies.data);
     setLoading(!cachedJobs); setError(null);

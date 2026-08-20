@@ -7,7 +7,7 @@ import { Chart } from "@/components/Chart";
 import { Pagination } from "@/components/Pagination";
 import { SelectField } from "@/components/SelectField";
 import { CoverageNotice, EmptyState, ErrorNotice, LoadingBlock, PageHeader, Panel, RefreshButton, TableWrap } from "@/components/ui";
-import { type CategoryRow, type Envelope, formatNumber, formatPercent, getCachedJson, getJson } from "@/lib/api";
+import { type CategoryRow, type Envelope, formatNumber, formatPercent, getCachedJson, getJson, getStoredJson } from "@/lib/api";
 import { channelOptions } from "@/lib/labels";
 
 type GroupedCategory = { key: string; name: string; status: string; count: number; share: number };
@@ -21,7 +21,7 @@ export function CategoriesPage() {
   const [pageSize, setPageSize] = useState(10);
   const load = useCallback(async () => {
     const params = channel === "all" ? undefined : { channel };
-    const cached = getCachedJson<Envelope<CategoryRow>>("/api/v1/distributions/categories", params);
+    const cached = getStoredJson<Envelope<CategoryRow>>("/api/v1/distributions/categories", params);
     if (cached) setResult(cached);
     setLoading(!cached); setError(null);
     try { setResult(await getJson<Envelope<CategoryRow>>("/api/v1/distributions/categories", params)); }

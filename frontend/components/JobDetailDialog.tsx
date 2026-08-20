@@ -6,7 +6,7 @@ import { BriefcaseBusiness, Building2, CalendarDays, ExternalLink, GraduationCap
 
 import { CompanyName } from "@/components/CompanyLogo";
 import { ChannelTag, ErrorNotice, LoadingBlock } from "@/components/ui";
-import { formatNumber, getCachedJson, getJson, type JobDetail, type JobRow } from "@/lib/api";
+import { formatNumber, getCachedJson, getJson, getStoredJson, type JobDetail, type JobRow } from "@/lib/api";
 
 export function JobDetailDialog({ job, onClose }: { job: JobRow; onClose: () => void }) {
   const path = `/api/v1/jobs/${encodeURIComponent(job.source_key)}/${encodeURIComponent(job.external_id)}`;
@@ -17,7 +17,7 @@ export function JobDetailDialog({ job, onClose }: { job: JobRow; onClose: () => 
   const closeRef = useRef<HTMLButtonElement>(null);
 
   const load = useCallback(async () => {
-    const cached = getCachedJson<JobDetail>(path);
+    const cached = getStoredJson<JobDetail>(path);
     if (cached) setDetail(cached);
     setLoading(!cached);
     setError(null);

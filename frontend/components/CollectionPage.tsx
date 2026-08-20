@@ -8,7 +8,7 @@ import { MultiSelectFilter } from "@/components/MultiSelectFilter";
 import { Pagination } from "@/components/Pagination";
 import { SearchField } from "@/components/SearchField";
 import { ChannelTag, EmptyState, ErrorNotice, LoadingBlock, MetricCard, PageHeader, Panel, RefreshButton, TableWrap } from "@/components/ui";
-import { type CollectionStatus, formatDateTime, formatNumber, formatPercent, getCachedJson, getJson } from "@/lib/api";
+import { type CollectionStatus, formatDateTime, formatNumber, formatPercent, getCachedJson, getJson, getStoredJson } from "@/lib/api";
 import { collectionStateLabel } from "@/lib/labels";
 import { channelOptions } from "@/lib/labels";
 import { matchesSubsequence } from "@/lib/search";
@@ -33,7 +33,7 @@ export function CollectionPage() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const load = useCallback(async (quiet = false): Promise<CollectionStatus | null> => {
-    const cached = getCachedJson<CollectionStatus>("/api/v1/collection/status");
+    const cached = getStoredJson<CollectionStatus>("/api/v1/collection/status");
     if (!quiet) setLoading(!cached);
     if (cached) setData(cached);
     try {

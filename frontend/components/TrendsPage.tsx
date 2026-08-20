@@ -8,7 +8,7 @@ import { CompanyName } from "@/components/CompanyLogo";
 import { Pagination } from "@/components/Pagination";
 import { SelectField } from "@/components/SelectField";
 import { ChannelTag, CoverageNotice, EmptyState, ErrorNotice, LoadingBlock, PageHeader, Panel, RefreshButton, TableWrap } from "@/components/ui";
-import { type CompanyRow, type Envelope, formatNumber, getCachedJson, getJson } from "@/lib/api";
+import { type CompanyRow, type Envelope, formatNumber, getCachedJson, getJson, getStoredJson } from "@/lib/api";
 import { channelOptions } from "@/lib/labels";
 
 export function TrendsPage() {
@@ -20,7 +20,7 @@ export function TrendsPage() {
   const [pageSize, setPageSize] = useState(10);
   const load = useCallback(async () => {
     const params = channel === "all" ? undefined : { channel };
-    const cached = getCachedJson<Envelope<CompanyRow>>("/api/v1/trends/companies", params);
+    const cached = getStoredJson<Envelope<CompanyRow>>("/api/v1/trends/companies", params);
     if (cached) setResult(cached);
     setLoading(!cached); setError(null);
     try {

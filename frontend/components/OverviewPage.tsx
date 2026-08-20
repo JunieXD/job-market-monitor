@@ -9,7 +9,7 @@ import { CompanyName } from "@/components/CompanyLogo";
 import { Pagination } from "@/components/Pagination";
 import { SelectField } from "@/components/SelectField";
 import { ChannelTag, CoverageNotice, EmptyState, ErrorNotice, LoadingBlock, MetricCard, PageHeader, Panel, RefreshButton, TableWrap } from "@/components/ui";
-import { type CompanyRow, type Coverage, type Envelope, formatNumber, formatPercent, getCachedJson, getJson } from "@/lib/api";
+import { type CompanyRow, type Coverage, type Envelope, formatNumber, formatPercent, getCachedJson, getJson, getStoredJson } from "@/lib/api";
 import { channelOptions } from "@/lib/labels";
 
 type OverviewData = { overview: Envelope<CompanyRow>; trend: Envelope<CompanyRow> };
@@ -28,8 +28,8 @@ export function OverviewPage() {
 
   const load = useCallback(async () => {
     const params = channel === "all" ? undefined : { channel };
-    const cachedOverview = getCachedJson<Envelope<CompanyRow>>("/api/v1/overview", params);
-    const cachedTrend = getCachedJson<Envelope<CompanyRow>>("/api/v1/trends/market", params);
+    const cachedOverview = getStoredJson<Envelope<CompanyRow>>("/api/v1/overview", params);
+    const cachedTrend = getStoredJson<Envelope<CompanyRow>>("/api/v1/trends/market", params);
     if (cachedOverview && cachedTrend) setData({ overview: cachedOverview, trend: cachedTrend });
     setLoading(!(cachedOverview && cachedTrend));
     setError(null);
