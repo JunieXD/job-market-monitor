@@ -147,6 +147,8 @@ def test_location_facts_stay_raw_while_city_mapping_uses_city_parts() -> None:
         version_locations = session.scalars(select(JobVersionLocation)).all()
         assert sum(item.canonical_location_id is None for item in version_locations) == 1
 
+    assert DataQualityChecker(repository.engine).run()["ok"] is True
+
 
 def test_running_progress_is_monotonic_and_stops_after_completion() -> None:
     repository, _ = make_repository()

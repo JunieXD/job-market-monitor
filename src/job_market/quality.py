@@ -24,6 +24,7 @@ from job_market.models import (
     SourceChannel,
     SourceLocationMapping,
 )
+from job_market.normalization import is_city_level_name
 
 
 class DataQualityChecker:
@@ -340,22 +341,24 @@ class DataQualityChecker:
 
     @staticmethod
     def _invalid_location_mapping_count(session: Session) -> int:
-        mapping_counts = (
+        mapping_rows = session.execute(
             select(
                 SourceLocationMapping.location_id,
                 func.count().label("mapping_count"),
             )
             .where(SourceLocationMapping.is_current.is_(True))
             .group_by(SourceLocationMapping.location_id)
-            .subquery()
         )
-        statement = (
-            select(func.count())
-            .select_from(Location)
-            .outerjoin(mapping_counts, mapping_counts.c.location_id == Location.id)
-            .where(func.coalesce(mapping_counts.c.mapping_count, 0) != 1)
+        mapping_counts = {
+            location_id: mapping_count
+            for location_id, mapping_count in mapping_rows
+        }
+        locations = session.execute(select(Location.id, Location.name))
+        return sum(
+            count != 1 if is_city_level_name(name) else count > 1
+            for location_id, name in locations
+            for count in (mapping_counts.get(location_id, 0),)
         )
-        return session.scalar(statement) or 0
 
     @staticmethod
     def _canonical_seen_date_missing(session: Session) -> int:
