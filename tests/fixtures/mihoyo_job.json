@@ -1,0 +1,53 @@
+{
+  "list": {
+    "id": "synthetic-mihoyo-001",
+    "title": "合成引擎工具开发工程师",
+    "addressDetailList": [
+      {
+        "addressId": "synthetic-shanghai",
+        "addressDetail": "上海市·徐汇区"
+      }
+    ],
+    "competencyType": "技术",
+    "jobNature": "全职",
+    "jobNatureId": 1,
+    "projectName": "合成校园项目",
+    "hurry": true,
+    "channelDetailIds": [1],
+    "tagList": [],
+    "jobSummary": "合成摘要",
+    "objectId": "synthetic-object",
+    "objectName": "合成业务对象"
+  },
+  "detail": {
+    "id": "synthetic-mihoyo-001",
+    "code": "MHY-SYNTHETIC-001",
+    "title": "合成引擎工具开发工程师",
+    "addressDetailList": [
+      {
+        "addressId": "synthetic-shanghai",
+        "addressDetail": "上海市·徐汇区"
+      }
+    ],
+    "competencyTypeId": "synthetic-tech",
+    "competencyType": "技术",
+    "jobNatureId": 1,
+    "jobNature": "全职",
+    "projectName": "合成校园项目",
+    "description": "负责合成引擎工具研发。",
+    "jobRequire": "具备扎实的软件工程基础。",
+    "addition": "有图形工具经验。",
+    "deliveryInstructions": "请附合成作品说明。",
+    "hadDelivery": 0,
+    "status": 1,
+    "channelDetailIds": [1],
+    "objectId": "synthetic-object",
+    "objectName": "合成业务对象",
+    "projectId": 13,
+    "hireType": 1,
+    "hireTypeName": "校园招聘",
+    "hurry": true,
+    "tagList": [],
+    "jobSummary": "合成摘要"
+  }
+}

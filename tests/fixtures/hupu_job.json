@@ -1,0 +1,24 @@
+{
+  "Id": "synthetic-hupu-001",
+  "HeadCount": 0,
+  "JobAdId": 990001,
+  "PostDateInt": 1786896000000,
+  "PostDate": "2026-08-17T00:00:00",
+  "EndTimeInt": 0,
+  "EndTime": "0001-01-01T00:00:00",
+  "JobAdName": "合成社区产品开发工程师",
+  "OrgId": 880001,
+  "Org": "合成研发部门",
+  "Category": "实习生招聘",
+  "CategoryId": "3",
+  "LocId": null,
+  "LocNames": [
+    "上海市·虹口区"
+  ],
+  "Duty": "负责合成社区产品研发。",
+  "Require": "具备扎实的编程基础。",
+  "Kind": "实习",
+  "Channel4IsHot": false,
+  "Status": 1,
+  "ChangeDate": "2026-08-18T09:30:00"
+}

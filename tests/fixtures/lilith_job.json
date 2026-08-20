@@ -1,0 +1,64 @@
+{
+  "id": "synthetic-lilith-001",
+  "title": "合成服务端开发工程师",
+  "sub_title": null,
+  "description": "负责合成游戏平台服务端研发。",
+  "requirement": "具备可靠的分布式系统基础。",
+  "job_category": null,
+  "city_info": null,
+  "recruit_type": {
+    "id": "201",
+    "name": "正式",
+    "parent": {
+      "id": "2",
+      "name": "校招"
+    }
+  },
+  "publish_time": 1786896000000,
+  "job_hot_flag": true,
+  "job_subject": {
+    "id": "synthetic-project",
+    "name": "合成校园项目"
+  },
+  "code": "LILITH-SYNTHETIC-001",
+  "department_id": "synthetic-department",
+  "job_function": {
+    "id": "synthetic-function-child",
+    "name": "研发",
+    "parent": {
+      "id": "synthetic-function-root",
+      "name": "技术"
+    }
+  },
+  "city_list": [
+    {
+      "code": "CT_SYNTHETIC_SH",
+      "name": "上海"
+    }
+  ],
+  "job_post_info": {
+    "job_active_status": "active",
+    "address_list": [
+      {
+        "id": "synthetic-address",
+        "name": "上海市·闵行区",
+        "city": {
+          "city_code": "CT_SYNTHETIC_SH",
+          "name": "上海"
+        },
+        "state": {
+          "state_code": "ST_SYNTHETIC_SH",
+          "name": "上海市"
+        },
+        "country": {
+          "country_code": "CN",
+          "name": "中国"
+        },
+        "district": {
+          "district_code": "DIST_SYNTHETIC_MH",
+          "name": "闵行区"
+        }
+      }
+    ]
+  }
+}

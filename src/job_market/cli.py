@@ -25,12 +25,15 @@ from job_market.connectors.cainiao import CainiaoConnector
 from job_market.connectors.ctrip import CtripConnector
 from job_market.connectors.didi import DidiConnector
 from job_market.connectors.huawei import HuaweiConnector
+from job_market.connectors.hupu import HupuConnector
 from job_market.connectors.iqiyi import IqiyiConnector
 from job_market.connectors.jd import JDConnector
 from job_market.connectors.kuaishou import KuaishouConnector
 from job_market.connectors.kuaishou_campus import KuaishouCampusConnector
 from job_market.connectors.lenovo import LenovoConnector
+from job_market.connectors.lilith import LilithConnector
 from job_market.connectors.meituan import MeituanConnector
+from job_market.connectors.mihoyo import MihoyoConnector
 from job_market.connectors.netease import NetEaseConnector
 from job_market.connectors.oppo import OppoConnector
 from job_market.connectors.pdd import PDDConnector
@@ -436,6 +439,50 @@ SOURCE_SPECS = {
         "connector": LenovoConnector,
         "channels": {
             Channel.CAMPUS: "联想中国应届生招聘与人才项目公开岗位",
+        },
+    },
+    "mihoyo": {
+        "key": "mihoyo_cn",
+        "company_key": "mihoyo",
+        "company_name": "米哈游",
+        "display_name": "米哈游招聘",
+        "source_type": "company_career_portal",
+        "scope_name": "米哈游公开社会招聘、校园招聘与实习岗位",
+        "base_url": "https://jobs.mihoyo.com",
+        "connector": MihoyoConnector,
+        "channels": {
+            Channel.EXPERIENCED: "米哈游社会招聘公开岗位",
+            Channel.CAMPUS: "米哈游当前校园招聘项目公开岗位",
+            Channel.INTERNSHIP: "米哈游实习生专项公开岗位",
+        },
+    },
+    "lilith": {
+        "key": "lilith_cn",
+        "company_key": "lilith",
+        "company_name": "莉莉丝游戏",
+        "display_name": "莉莉丝游戏招聘",
+        "source_type": "company_career_portal",
+        "scope_name": "莉莉丝游戏公开社会招聘、校园招聘与实习岗位",
+        "base_url": "https://jobs.lilith.com",
+        "connector": LilithConnector,
+        "channels": {
+            Channel.EXPERIENCED: "莉莉丝社会招聘公开岗位",
+            Channel.CAMPUS: "莉莉丝校园招聘公开岗位（排除实习页重复成员）",
+            Channel.INTERNSHIP: "莉莉丝实习招聘页公开岗位",
+        },
+    },
+    "hupu": {
+        "key": "hupu_cn",
+        "company_key": "hupu",
+        "company_name": "虎扑",
+        "display_name": "虎扑招聘",
+        "source_type": "company_career_portal",
+        "scope_name": "虎扑公开社会招聘与实习岗位",
+        "base_url": "https://hupu.zhiye.com",
+        "connector": HupuConnector,
+        "channels": {
+            Channel.EXPERIENCED: "虎扑社会招聘公开岗位",
+            Channel.INTERNSHIP: "虎扑实习生招聘公开岗位",
         },
     },
 }
