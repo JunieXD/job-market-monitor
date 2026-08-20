@@ -334,5 +334,5 @@ def test_job_versions_keep_the_mapping_used_at_observation_time() -> None:
     ]
     location_versions = [item.mapping_version for item in location_snapshots]
     assert location_versions[0] is not None
-    assert location_versions[0].startswith("auto-city-name-v2-")
+    assert location_versions[0].startswith("auto-city-name-v4-")
     assert location_versions[1:] == ["location-map-v1", "location-map-v2"]

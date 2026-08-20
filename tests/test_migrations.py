@@ -52,7 +52,7 @@ def test_fresh_migrations_match_models_and_create_analysis_views() -> None:
             text("SELECT version_num FROM alembic_version")
         ).scalar_one()
         drift = compare_metadata(MigrationContext.configure(connection), Base.metadata)
-    assert revision == "0016"
+    assert revision == "0017"
     assert drift == []
     columns = {item["name"]: item for item in inspect(engine).get_columns("jobs")}
     run_columns = {
@@ -279,8 +279,8 @@ def test_city_display_migration_preserves_raw_names_and_repoints_history() -> No
         session.add_all([canonical_beijing, canonical_beijing_city])
         session.flush()
         locations = [
-            Location(source_id=source.id, code="BJ", name="北京"),
-            Location(source_id=source.id, code="BJ-CN", name="北京市"),
+            Location(source_id=source.id, code="CD", name="四川省·成都"),
+            Location(source_id=source.id, code="CD-HQ", name="成都总部"),
         ]
         session.add_all(locations)
         session.flush()
@@ -442,8 +442,8 @@ def test_city_display_migration_preserves_raw_names_and_repoints_history() -> No
 
     with Session(engine) as session:
         assert session.scalars(select(Location.name).order_by(Location.id)).all() == [
-            "北京",
-            "北京市",
+            "四川省·成都",
+            "成都总部",
         ]
         history = session.scalars(
             select(JobVersionLocation).order_by(JobVersionLocation.job_version_id)
@@ -452,7 +452,7 @@ def test_city_display_migration_preserves_raw_names_and_repoints_history() -> No
         assert {item.mapping_method for item in history} == {"normalized_city_name"}
         assert len({item.mapping_version for item in history}) == 1
         assert next(iter({item.mapping_version for item in history})).startswith(
-            "auto-city-name-v3-city-name-"
+            "auto-city-name-v4-city-name-"
         )
 
 
@@ -627,7 +627,7 @@ def test_legacy_database_is_stamped_migrated_and_backfilled_without_data_loss() 
         assert session.query(JobVersionSourceCategory).count() == 1
         assert session.query(SourceCategory).count() == 2
         assert session.query(SourceChannel).count() == 2
-        assert session.query(SourceLocationMapping).count() == 3
+        assert session.query(SourceLocationMapping).count() == 4
         assert session.query(SourceLocationMapping).filter(
             SourceLocationMapping.is_current.is_(True)
         ).count() == 1

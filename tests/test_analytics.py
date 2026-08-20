@@ -135,6 +135,9 @@ def test_daily_views_use_baselines_versioned_dimensions_and_fractional_cities() 
     )
     by_city = {row["city_name"]: row for row in cities}
     assert by_city["甲城"]["posting_count"] == 2
+    assert by_city["甲城"]["total_posting_count"] == 2
+    assert float(by_city["甲城"]["posting_share"]) == pytest.approx(1.0)
+    assert float(by_city["乙城"]["posting_share"]) == pytest.approx(0.5)
     assert float(by_city["甲城"]["fractional_posting_count"]) == pytest.approx(1.5)
     assert float(by_city["甲城"]["fractional_share"]) == pytest.approx(0.75)
     assert float(by_city["乙城"]["fractional_share"]) == pytest.approx(0.25)
@@ -208,6 +211,8 @@ def test_market_city_view_unifies_same_city_across_sources() -> None:
     beijing = [row for row in rows if row["city_name"] == "北京"]
     assert len(beijing) == 1
     assert beijing[0]["posting_count"] == 2
+    assert beijing[0]["total_posting_count"] == 2
+    assert float(beijing[0]["posting_share"]) == pytest.approx(1.0)
     assert beijing[0]["covered_company_count"] == 2
 
     selected_rows = AnalyticsRepository(engine).city_distribution(
@@ -221,6 +226,33 @@ def test_market_city_view_unifies_same_city_across_sources() -> None:
     }
     assert [row["city_name"] for row in selected_rows] == ["北京", "北京"]
     assert DataQualityChecker(engine).run()["ok"] is True
+
+
+def test_city_distribution_uses_friendly_label_for_non_city_locations() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    clock = Clock()
+    repository = Repository(engine, clock=clock)
+    source_id = repository.ensure_source()
+    province_job = make_job(
+        "province-job",
+        title="区域岗位",
+        category_id="operations",
+        category_name="运营",
+        locations=[LocationRecord(code="SC", name="四川省")],
+    )
+    run_id = repository.start_run(source_id, Channel.CAMPUS.value)
+    repository.ingest(run_id, collection([province_job]))
+
+    rows = AnalyticsRepository(engine).city_distribution(
+        company_key="bytedance",
+        snapshot_date=clock().date(),
+        channel=Channel.CAMPUS.value,
+    )
+
+    assert len(rows) == 1
+    assert rows[0]["city_name"] == "未明确城市"
+    assert rows[0]["canonical_location_key"] is None
 
 
 def test_multi_category_and_unclassified_jobs_remain_distinct() -> None:

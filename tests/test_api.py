@@ -194,6 +194,8 @@ def test_api_returns_analysis_envelopes_for_categories_and_cities() -> None:
         )
         assert cities.status_code == 200
         assert cities.json()["data"][0]["city_name"] == "北京"
+        assert cities.json()["data"][0]["total_posting_count"] == 1
+        assert cities.json()["data"][0]["posting_share"] == 1.0
 
         selected_cities = client.get(
             "/api/v1/distributions/cities",

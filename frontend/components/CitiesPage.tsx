@@ -11,7 +11,7 @@ import { CoverageNotice, EmptyState, ErrorNotice, LoadingBlock, PageHeader, Pane
 import { type CityRow, type CompanyMeta, type Envelope, formatNumber, formatPercent, getCachedJson, getJson } from "@/lib/api";
 import { channelOptions } from "@/lib/labels";
 
-type GroupedCity = { key: string; name: string; postingCount: number; weightedCount: number; companies: number; share: number };
+type GroupedCity = { key: string; name: string; postingCount: number; companies: number; share: number };
 
 export function CitiesPage() {
   const [channel, setChannel] = useState("all");
@@ -51,7 +51,7 @@ export function CitiesPage() {
   const currentPage = Math.min(page, pageCount);
   const visibleRows = rows.slice((currentPage - 1) * pageSize, currentPage * pageSize);
   const coverage = result?.meta.coverage;
-  const topFiveShare = rows.slice(0, 5).reduce((sum, row) => sum + row.share, 0);
+  const topFiveCoverage = rows.slice(0, 5).reduce((sum, row) => sum + row.share, 0);
   const selectedCompanyCount = companyKeys?.length ?? companies.length;
   return (
     <>
@@ -65,15 +65,15 @@ export function CitiesPage() {
       <div className="city-insights" aria-label="城市分布摘要">
         <div><span>覆盖城市</span><strong>{formatNumber(rows.length)}</strong></div>
         <div><span>岗位最多</span><strong>{rows[0]?.name ?? "-"}</strong></div>
-        <div><span>前五城市占比</span><strong>{formatPercent(topFiveShare)}</strong></div>
+        <div><span>前五覆盖率之和</span><strong>{formatPercent(topFiveCoverage)}</strong></div>
         <div><span>已选公司</span><strong>{formatNumber(selectedCompanyCount)}</strong></div>
       </div>
       <div className="content-grid city-grid">
-        <Panel className="span-7 city-panel" title="城市岗位热度" note="一个岗位涉及多个城市时，按城市均分">
+        <Panel className="span-7 city-panel" title="城市岗位热度" note="岗位涉及该城市即完整计 1">
           {loading && !result ? <LoadingBlock /> : rows.length ? <Chart option={chart} ariaLabel="城市岗位热度排行" className="chart-tall" /> : <EmptyState title="暂无城市分布数据" />}
         </Panel>
         <Panel className="span-5 city-panel" title="城市排行" note={coverage?.snapshot_date ? `更新至 ${coverage.snapshot_date}` : "暂无数据"}>
-          {loading && !result ? <LoadingBlock /> : rows.length ? <><TableWrap><table className="compact-table fit-table city-table"><thead><tr><th>城市</th><th>岗位</th><th>公司</th><th>占比</th></tr></thead><tbody>{visibleRows.map((row, index) => <tr key={row.key}><td><span className="rank">{(currentPage - 1) * pageSize + index + 1}</span>{row.name}</td><td>{formatNumber(row.postingCount)}</td><td>{formatNumber(row.companies)}</td><td>{formatPercent(row.share)}</td></tr>)}</tbody></table></TableWrap><Pagination total={rows.length} page={currentPage} pageSize={pageSize} onPageChange={setPage} onPageSizeChange={(size) => { setPageSize(size); setPage(1); }} itemLabel="个城市" /></> : <EmptyState title="暂无城市排行" />}
+          {loading && !result ? <LoadingBlock /> : rows.length ? <><TableWrap><table className="compact-table fit-table city-table"><thead><tr><th>城市</th><th>岗位</th><th>公司</th><th>岗位覆盖率</th></tr></thead><tbody>{visibleRows.map((row, index) => <tr key={row.key}><td><span className="rank">{(currentPage - 1) * pageSize + index + 1}</span>{row.name}</td><td>{formatNumber(row.postingCount)}</td><td>{formatNumber(row.companies)}</td><td>{formatPercent(row.share)}</td></tr>)}</tbody></table></TableWrap><Pagination total={rows.length} page={currentPage} pageSize={pageSize} onPageChange={setPage} onPageSizeChange={(size) => { setPageSize(size); setPage(1); }} itemLabel="个城市" /></> : <EmptyState title="暂无城市排行" />}
         </Panel>
       </div>
     </>
@@ -83,22 +83,24 @@ export function CitiesPage() {
 function groupCities(rows: CityRow[]): GroupedCity[] {
   const grouped = new Map<string, GroupedCity>();
   const companySets = new Map<string, Set<string>>();
+  const totalPostingCount = Math.max(...rows.map((row) => Number(row.total_posting_count ?? 0)), 0)
+    || rows.reduce((sum, row) => sum + Number(row.fractional_posting_count), 0);
   rows.forEach((row) => {
     const key = row.canonical_location_key ?? row.city_name;
-    const current = grouped.get(key) ?? { key, name: row.city_name, postingCount: 0, weightedCount: 0, companies: 0, share: 0 };
+    const current = grouped.get(key) ?? { key, name: row.city_name, postingCount: 0, companies: 0, share: 0 };
     current.postingCount += row.posting_count;
-    current.weightedCount += Number(row.fractional_posting_count);
     const companySet = companySets.get(key) ?? new Set<string>();
     if (row.company_key) companySet.add(row.company_key);
     companySets.set(key, companySet);
     current.companies = Math.max(current.companies, row.covered_company_count ?? companySet.size);
     grouped.set(key, current);
   });
-  const total = [...grouped.values()].reduce((sum, row) => sum + row.weightedCount, 0);
-  return [...grouped.values()].map((row) => ({ ...row, share: total ? row.weightedCount / total : 0 })).sort((a, b) => b.weightedCount - a.weightedCount);
+  return [...grouped.values()]
+    .map((row) => ({ ...row, share: totalPostingCount ? row.postingCount / totalPostingCount : 0 }))
+    .sort((a, b) => b.postingCount - a.postingCount || a.name.localeCompare(b.name, "zh-CN"));
 }
 
 function cityOption(rows: GroupedCity[]): EChartsOption {
   const top = rows.slice(0, 12).reverse();
-  return { color: ["#c5554d"], tooltip: { trigger: "axis", axisPointer: { type: "shadow" } }, grid: { left: 84, right: 26, top: 12, bottom: 26 }, xAxis: { type: "value", splitLine: { lineStyle: { color: "#e9eef0" } } }, yAxis: { type: "category", data: top.map((row) => row.name) }, series: [{ type: "bar", barMaxWidth: 22, data: top.map((row) => Number(row.weightedCount.toFixed(2))) }] };
+  return { color: ["#c5554d"], tooltip: { trigger: "axis", axisPointer: { type: "shadow" } }, grid: { left: 84, right: 26, top: 12, bottom: 26 }, xAxis: { type: "value", minInterval: 1, splitLine: { lineStyle: { color: "#e9eef0" } } }, yAxis: { type: "category", data: top.map((row) => row.name) }, series: [{ type: "bar", barMaxWidth: 22, data: top.map((row) => row.postingCount) }] };
 }

@@ -116,6 +116,38 @@ def make_repository(*, missing_runs_before_close: int = 2) -> tuple[Repository, 
     )
 
 
+def test_location_facts_stay_raw_while_city_mapping_uses_city_parts() -> None:
+    repository, _ = make_repository()
+    source_id = repository.ensure_source()
+    locations = [
+        LocationRecord(code="CD", name="四川省·成都"),
+        LocationRecord(code="HQ", name="成都总部"),
+        LocationRecord(code="PROVINCE", name="四川省"),
+    ]
+    run_id = repository.start_run(source_id, Channel.CAMPUS.value)
+    repository.ingest(run_id, result([make_job(locations=locations)]))
+
+    with Session(repository.engine) as session:
+        source_locations = session.scalars(select(Location).order_by(Location.code)).all()
+        assert [item.name for item in source_locations] == [
+            "四川省·成都",
+            "成都总部",
+            "四川省",
+        ]
+        mappings = session.scalars(
+            select(SourceLocationMapping).where(SourceLocationMapping.is_current.is_(True))
+        ).all()
+        assert len(mappings) == 2
+        canonical_names = session.scalars(
+            select(CanonicalLocation.name).where(
+                CanonicalLocation.id.in_([item.canonical_location_id for item in mappings])
+            )
+        ).all()
+        assert canonical_names == ["成都"]
+        version_locations = session.scalars(select(JobVersionLocation)).all()
+        assert sum(item.canonical_location_id is None for item in version_locations) == 1
+
+
 def test_running_progress_is_monotonic_and_stops_after_completion() -> None:
     repository, _ = make_repository()
     source_id = repository.ensure_source()

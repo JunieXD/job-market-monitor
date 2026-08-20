@@ -52,6 +52,8 @@ export type CityRow = {
   company_name?: string;
   canonical_location_key?: string | null;
   posting_count: number;
+  total_posting_count?: number;
+  posting_share?: number;
   fractional_posting_count: number;
   fractional_share: number;
   covered_company_count?: number;

@@ -31,7 +31,11 @@ from job_market.models import (
     SourceChannel,
     SourceLocationMapping,
 )
-from job_market.normalization import canonical_location_key, normalize_city_name
+from job_market.normalization import (
+    canonical_location_key,
+    is_city_level_name,
+    normalize_city_name,
+)
 from job_market.profiling import profile_source_fields
 from job_market.schemas import (
     SOURCE_FACT_CONTRACT_VERSION,
@@ -880,13 +884,19 @@ class Repository:
         now: datetime,
     ) -> None:
         normalized_name = normalize_city_name(record.name)
-        key = canonical_location_key(record)
         mapping = session.scalar(
             select(SourceLocationMapping).where(
                 SourceLocationMapping.location_id == location.id,
                 SourceLocationMapping.is_current.is_(True),
             )
         )
+        if not is_city_level_name(record.name):
+            if mapping is None or mapping.mapping_method in AUTO_LOCATION_MAPPING_METHODS:
+                if mapping is not None:
+                    mapping.is_current = False
+                return
+            return
+        key = canonical_location_key(record)
         if mapping is not None:
             mapped_location = session.get(
                 CanonicalLocation,
@@ -924,7 +934,7 @@ class Repository:
             canonical.name = normalized_name
             canonical.city_name = normalized_name
             Repository._enrich_canonical_location(canonical, record)
-        mapping_version = f"auto-city-name-v2-{key}"
+        mapping_version = f"auto-city-name-v4-{key}"
         replacement = session.scalar(
             select(SourceLocationMapping).where(
                 SourceLocationMapping.location_id == location.id,

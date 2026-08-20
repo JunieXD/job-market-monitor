@@ -369,7 +369,17 @@ class AnalyticsRepository:
         )
         statement = text(
             f"""
-            WITH version_location_counts AS (
+            WITH total_counts AS (
+                SELECT ds.snapshot_date,
+                       COUNT(DISTINCT jo.job_id) AS total_posting_count
+                FROM daily_snapshots AS ds
+                JOIN sources AS s ON s.id = ds.source_id
+                {company_joins}
+                JOIN job_observations AS jo
+                    ON jo.crawl_run_id = ds.crawl_run_id
+                {where}
+                GROUP BY ds.snapshot_date
+            ), version_location_counts AS (
                 SELECT job_version_id, COUNT(*) AS location_count
                 FROM job_version_locations
                 GROUP BY job_version_id
@@ -377,7 +387,7 @@ class AnalyticsRepository:
                 SELECT ds.snapshot_date, ds.channel{company_columns},
                        jvl.canonical_location_id,
                        cl.key AS canonical_location_key,
-                       CASE WHEN cl.id IS NULL THEN '未映射' ELSE cl.name END
+                       CASE WHEN cl.id IS NULL THEN '未明确城市' ELSE cl.name END
                            AS city_name,
                        cl.country_name, cl.state_name,
                        COUNT(DISTINCT jo.job_id) AS posting_count,
@@ -400,15 +410,24 @@ class AnalyticsRepository:
                          cl.country_name, cl.state_name
             )
             SELECT city_counts.*,
+                   total_counts.total_posting_count,
+                   1.0 * city_counts.posting_count
+                       / NULLIF(total_counts.total_posting_count, 0)
+                       AS posting_share,
                    fractional_posting_count / NULLIF(
                        SUM(fractional_posting_count) OVER (
-                           PARTITION BY snapshot_date, channel{
-                               ', company_key' if not market else ''
+                           PARTITION BY city_counts.snapshot_date,
+                                        city_counts.channel{
+                               ', city_counts.company_key' if not market else ''
                            }
                        ), 0
                    ) AS fractional_share
             FROM city_counts
-            ORDER BY snapshot_date, fractional_share DESC, city_name
+            JOIN total_counts
+              ON total_counts.snapshot_date = city_counts.snapshot_date
+            ORDER BY city_counts.snapshot_date,
+                     city_counts.posting_count DESC,
+                     city_counts.city_name
             """
         )
         with self.engine.connect() as connection:
