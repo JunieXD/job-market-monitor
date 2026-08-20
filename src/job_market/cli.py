@@ -692,6 +692,10 @@ async def crawl(args: argparse.Namespace, settings: Settings) -> int:
 
     failures: list[str] = []
     partial_channels: list[str] = []
+    block_nonessential_resources = settings.crawl_block_nonessential_resources and spec.get(
+        "block_nonessential_resources",
+        True,
+    )
     for channel in channels:
         run_id = "dry-run"
         connector = None
@@ -711,6 +715,10 @@ async def crawl(args: argparse.Namespace, settings: Settings) -> int:
                 channel=channel.value,
                 dry_run=args.dry_run,
                 timeout_seconds=timeout_seconds,
+                resource_policy={
+                    "block_nonessential_resources": block_nonessential_resources,
+                    "block_service_workers": settings.crawl_block_service_workers,
+                },
             )
             raw_store = (
                 None
@@ -732,10 +740,7 @@ async def crawl(args: argparse.Namespace, settings: Settings) -> int:
                     ),
                 )
                 network_metrics = BrowserNetworkMetrics()
-                if settings.crawl_block_nonessential_resources and spec.get(
-                    "block_nonessential_resources",
-                    True,
-                ):
+                if block_nonessential_resources:
                     await network_metrics.install_policy(context)
                 page = await context.new_page()
                 await network_metrics.attach_page(page)

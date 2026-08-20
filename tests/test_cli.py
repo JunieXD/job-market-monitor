@@ -59,6 +59,10 @@ def test_category_summary_keeps_unclassified_and_multi_category_counts() -> None
     }
 
 
+def test_kuaishou_keeps_initialization_resources_unblocked() -> None:
+    assert cli.SOURCE_SPECS["kuaishou"]["block_nonessential_resources"] is False
+
+
 def test_incomplete_collection_is_never_absence_authoritative() -> None:
     result = CollectionResult(
         channel=Channel.CAMPUS,
