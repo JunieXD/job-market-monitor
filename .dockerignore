@@ -9,4 +9,6 @@ runtime
 data
 backups
 outputs
-
+frontend
+tests
+docs

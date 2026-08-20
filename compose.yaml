@@ -26,6 +26,7 @@ services:
       retries: 20
 
   collector:
+    image: ${COLLECTOR_IMAGE:-job-market-monitor-collector:latest}
     build:
       context: .
     init: true

@@ -81,6 +81,7 @@ class ByteDanceConnector:
         self._partition_counts: dict[Partition, int] = {}
         self._current_partition: Partition | None = None
         self._current_payload: dict[str, Any] | None = None
+        self._active_portal: PortalConfig | None = None
         self.page.on("response", self._record_response)
 
     async def collect(
@@ -163,52 +164,93 @@ class ByteDanceConnector:
         portal: PortalConfig,
         partition: Partition,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
+        if self._active_portal is None:
+            filters, payload = await self._initialize_portal(portal)
+            self._filters[portal.channel] = filters
+            self._active_portal = portal
+            self._set_current_partition(Partition(label="all"), payload)
+        elif self._active_portal != portal:
+            raise RuntimeError("ByteDance connector cannot switch portals in one session")
+        elif self._current_partition == partition and self._current_payload is not None:
+            return self._filters[portal.channel], self._current_payload
+        else:
+            payload = await self._reset_to_root()
+
+        if partition.category_name:
+            payload = await self._select_category(partition)
+
+        if partition.location_name:
+            payload = await self._select_location(partition)
+
+        self._set_current_partition(partition, payload)
+        return self._filters[portal.channel], payload
+
+    async def _initialize_portal(
+        self,
+        portal: PortalConfig,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
         await self._rate_limit()
         self._drain_response_queues()
         list_url = f"{portal.page_url}?current=1&limit={UI_PAGE_SIZE}"
         await self.page.goto(list_url, wait_until="domcontentloaded", timeout=60_000)
-
-        payload = await self._next_search_payload(f"jobs:{partition.label}:root")
-        if portal.channel not in self._filters:
-            filters_payload = await self._next_filter_payload(portal)
-            self._filters[portal.channel] = filters_payload["data"]
+        payload = await self._next_search_payload("jobs:all:root")
+        filters_payload = await self._next_filter_payload(portal)
         await self._dismiss_optional_overlays()
+        return filters_payload["data"], payload
 
-        if partition.category_name:
-            await self._rate_limit()
-            self._drain_queue(self._search_responses)
-            selector = (
-                "span.atsx-clamp-content[data-cy-value="
-                f"{json.dumps(partition.category_name, ensure_ascii=False)}]"
-            )
-            category = self.page.locator(selector)
-            if await category.count() != 1:
-                raise RuntimeError(
-                    f"Cannot uniquely locate category filter: {partition.category_name}"
-                )
-            await category.click()
-            payload = await self._next_search_payload(f"jobs:{partition.label}:category")
+    async def _reset_to_root(self) -> dict[str, Any]:
+        root = Partition(label="all")
+        if self._current_partition == root and self._current_payload is not None:
+            return self._current_payload
+        await self._rate_limit()
+        self._drain_queue(self._search_responses)
+        clear = self.page.locator("span.filterClear:not(.disabled)")
+        if await clear.count() != 1:
+            raise RuntimeError("Cannot uniquely locate the active ByteDance filter reset")
+        await clear.click()
+        payload = await self._next_search_payload("jobs:all:reset")
+        self._set_current_partition(root, payload)
+        return payload
 
-        if partition.location_name:
-            await self._rate_limit()
-            self._drain_queue(self._search_responses)
-            city = self.page.locator(".filter-ellipsis-text-item").filter(
-                has_text=partition.location_name
-            )
-            if await city.count() != 1:
-                raise RuntimeError(
-                    f"Cannot uniquely locate city filter: {partition.location_name}"
-                )
-            await city.click()
-            payload = await self._next_search_payload(f"jobs:{partition.label}:city")
+    async def _select_category(self, partition: Partition) -> dict[str, Any]:
+        if partition.category_name is None:
+            raise RuntimeError(f"Partition has no category name: {partition.label}")
+        await self._rate_limit()
+        self._drain_queue(self._search_responses)
+        label_selector = (
+            "span.atsx-clamp-content[data-cy-value="
+            f"{json.dumps(partition.category_name, ensure_ascii=False)}]"
+        )
+        category = self.page.locator(f"li:has({label_selector}) > span.atsx-tree-checkbox")
+        if await category.count() != 1:
+            raise RuntimeError(f"Cannot uniquely locate category filter: {partition.category_name}")
+        await category.click()
+        return await self._next_search_payload(f"jobs:{partition.label}:category")
 
+    async def _select_location(self, partition: Partition) -> dict[str, Any]:
+        if partition.location_name is None:
+            raise RuntimeError(f"Partition has no location name: {partition.label}")
+        await self._rate_limit()
+        self._drain_queue(self._search_responses)
+        city = self.page.locator(".filter-ellipsis-text-item").filter(
+            has_text=partition.location_name
+        )
+        if await city.count() != 1:
+            raise RuntimeError(f"Cannot uniquely locate city filter: {partition.location_name}")
+        await city.click()
+        return await self._next_search_payload(f"jobs:{partition.label}:city")
+
+    def _set_current_partition(
+        self,
+        partition: Partition,
+        payload: dict[str, Any],
+    ) -> None:
         count = payload["data"].get("count")
         if not isinstance(count, int) or count < 0:
             raise RuntimeError(f"Invalid count for partition {partition.label}: {count!r}")
         self._partition_counts[partition] = count
         self._current_partition = partition
         self._current_payload = payload
-        return self._filters[portal.channel], payload
 
     async def _next_page(self, partition: Partition) -> dict[str, Any]:
         await self._rate_limit()
@@ -251,9 +293,7 @@ class ByteDanceConnector:
         return self._validate_response(payload, operation)
 
     @staticmethod
-    async def _next_response(
-        queue: JsonResponseQueue, operation: str
-    ) -> dict[str, Any]:
+    async def _next_response(queue: JsonResponseQueue, operation: str) -> dict[str, Any]:
         return await next_json_payload(
             queue,
             timeout_seconds=RESPONSE_TIMEOUT_SECONDS,
@@ -393,13 +433,9 @@ class ByteDanceConnector:
         parent_id = str(parent.get("id") or "").strip() or None
         parent_name = str(parent.get("name") or "").strip() or None
         if (parent_id is None) != (parent_name is None):
-            raise ValueError(
-                f"ByteDance job has an incomplete parent category: {raw.get('id')}"
-            )
+            raise ValueError(f"ByteDance job has an incomplete parent category: {raw.get('id')}")
 
-        source_url = (
-            f"https://jobs.bytedance.com/{channel.value}/position/{raw['id']}/detail"
-        )
+        source_url = f"https://jobs.bytedance.com/{channel.value}/position/{raw['id']}/detail"
         return JobRecord(
             source_key="bytedance_cn",
             external_id=str(raw["id"]),

@@ -12,6 +12,7 @@ def _write_executable(path: Path, content: str) -> None:
 
 def test_benchmark_records_parallel_outputs_and_stats(tmp_path: Path) -> None:
     docker = tmp_path / "docker"
+    docker_calls = tmp_path / "docker-calls"
     timeout = tmp_path / "timeout"
     _write_executable(
         docker,
@@ -22,11 +23,16 @@ case "${1:-}" in
     printf 'benchmark-alpha\\t10%%\\t100MiB / 1GiB\\t9.77%%\\t1MB / 100kB\\n'
     ;;
   inspect)
-    printf 'true\\n'
+    if [[ "$*" == *"--format"* ]]; then
+      printf 'sha256:test-image\\n'
+    else
+      printf 'true\\n'
+    fi
     ;;
   rm)
     ;;
   compose)
+    printf '%s\\n' "$COLLECTOR_IMAGE" >>"$DOCKER_CALLS"
     sleep 1
     printf '{"jobs": 1, "complete": false}\\n'
     ;;
@@ -58,6 +64,8 @@ exec "$@"
         "BENCHMARK_PARALLEL": "2",
         "BENCHMARK_MAX_PAGES": "1",
         "BENCHMARK_SOURCES": "alpha:experienced beta:general",
+        "COLLECTOR_IMAGE": "collector:candidate",
+        "DOCKER_CALLS": str(docker_calls),
     }
 
     result = subprocess.run(
@@ -88,6 +96,10 @@ exec "$@"
     assert "parallel=2" in summary
     assert "successful_cases=2" in summary
     assert "failed_cases=0" in summary
+    assert docker_calls.read_text(encoding="utf-8").splitlines() == [
+        "collector:candidate",
+        "collector:candidate",
+    ]
 
 
 def test_benchmark_finishes_all_cases_before_reporting_failure(tmp_path: Path) -> None:
@@ -102,7 +114,11 @@ case "${1:-}" in
     printf 'benchmark-alpha\\t1%%\\t1MiB / 1GiB\\t0.1%%\\t1kB / 1kB\\n'
     ;;
   inspect)
-    printf 'true\\n'
+    if [[ "$*" == *"--format"* ]]; then
+      printf 'sha256:test-image\\n'
+    else
+      printf 'true\\n'
+    fi
     ;;
   exec)
     printf '1024 1024\\n'

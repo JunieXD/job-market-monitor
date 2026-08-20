@@ -8,6 +8,7 @@ x-logging: &default-logging
 
 services:
   collector:
+    image: ${COLLECTOR_IMAGE:-job-market-monitor-collector:latest}
     build:
       context: .
     init: true

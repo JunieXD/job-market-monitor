@@ -7,6 +7,7 @@ COMPOSE_FILE=${COMPOSE_FILE:-${PROJECT_DIR}/compose.yaml}
 DOCKER_BIN=${DOCKER_BIN:-/usr/bin/docker}
 TIMEOUT_BIN=${TIMEOUT_BIN:-/usr/bin/timeout}
 COLLECTOR_IMAGE=${COLLECTOR_IMAGE:-job-market-monitor-collector:latest}
+export COLLECTOR_IMAGE
 BENCHMARK_MAX_PAGES=${BENCHMARK_MAX_PAGES:-20}
 BENCHMARK_TIMEOUT_SECONDS=${BENCHMARK_TIMEOUT_SECONDS:-3600}
 BENCHMARK_PARALLEL=${BENCHMARK_PARALLEL:-1}
@@ -48,6 +49,9 @@ if ! "$DOCKER_BIN" image inspect "$COLLECTOR_IMAGE" >/dev/null 2>&1; then
   log "collector image is missing: ${COLLECTOR_IMAGE}"
   exit 1
 fi
+resolved_image_id=$(
+  "$DOCKER_BIN" image inspect --format '{{.Id}}' "$COLLECTOR_IMAGE"
+)
 active_names=()
 active_pids=()
 active_sources=()
@@ -226,6 +230,7 @@ reap_one() {
 }
 
 started_at=$SECONDS
+log "collector_image=${COLLECTOR_IMAGE} image_id=${resolved_image_id}"
 for spec in $BENCHMARK_SOURCES; do
   source=${spec%%:*}
   channel=${spec#*:}

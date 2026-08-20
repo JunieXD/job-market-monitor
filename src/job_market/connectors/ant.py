@@ -2,21 +2,16 @@
 
 import asyncio
 import json
+import secrets
 from dataclasses import dataclass
 from datetime import datetime
 from math import ceil
 from typing import Any
 from urllib.parse import urljoin
 
-from playwright.async_api import Page, Response
+from playwright.async_api import Page
 
 from job_market.config import Settings
-from job_market.connectors.browser_json import (
-    JsonResponseQueue,
-    drain_json_responses,
-    enqueue_json_response,
-    next_json_payload,
-)
 from job_market.raw_store import RawStore
 from job_market.schemas import (
     CategoryAssignmentMethod,
@@ -28,10 +23,33 @@ from job_market.schemas import (
     SourceCategoryRecord,
 )
 
-RESPONSE_TIMEOUT_SECONDS = 30
 COLLECTION_PAGE_SIZE = 49
 MAX_COLLECTION_ATTEMPTS = 5
 POSITION_LIST_URL = "https://talent.antgroup.com/off-campus"
+BOOTSTRAP_URL = "https://talent.antgroup.com/robots.txt"
+API_BASE_URL = "https://hrcareersweb.antgroup.com/api/social"
+CATEGORY_API_URL = f"{API_BASE_URL}/category/list"
+POSITION_API_URL = f"{API_BASE_URL}/position/search"
+FETCH_JSON_SCRIPT = """
+async ({url, token, data}) => {
+    const response = await fetch(
+        `${url}?ctoken=${encodeURIComponent(token)}`,
+        {
+            method: "POST",
+            credentials: "include",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify(data),
+        },
+    );
+    let payload = null;
+    try {
+        payload = await response.json();
+    } catch (_) {
+        // The caller reports a useful status/error when the endpoint is not JSON.
+    }
+    return {status: response.status, payload};
+}
+"""
 
 
 @dataclass(frozen=True)
@@ -41,7 +59,7 @@ class CategoryFilter:
 
 
 class AntConnector:
-    """Collect complete social-recruitment responses through Ant's public UI."""
+    """Collect complete social-recruitment responses from Ant's public API."""
 
     source_key = "ant_cn"
 
@@ -52,12 +70,9 @@ class AntConnector:
         self.snapshots: list[RawSnapshotRecord] = []
         self.pages_fetched = 0
         self._last_request_at = 0.0
-        self._position_responses: JsonResponseQueue = asyncio.Queue()
-        self._category_responses: JsonResponseQueue = asyncio.Queue()
-        self._active_category_code = ""
         self._category_catalog: tuple[CategoryFilter, ...] | None = None
-        self._position_api_url: str | None = None
-        self.page.on("response", self._record_response)
+        self._csrf_token = f"bigfish_ctoken_{secrets.token_hex(12)}"
+        self._session_initialized = False
 
     async def collect(
         self,
@@ -96,6 +111,7 @@ class AntConnector:
     ) -> tuple[dict[str, JobRecord], bool]:
         union_by_id: dict[str, JobRecord] = {}
         total_pages = ceil(total_count / COLLECTION_PAGE_SIZE) if total_count else 0
+        last_unstable_job_id: str | None = None
 
         for attempt in range(1, MAX_COLLECTION_ATTEMPTS + 1):
             payload = initial_payload if attempt == 1 else await self._open_root()
@@ -108,6 +124,7 @@ class AntConnector:
 
             attempt_partition = "root" if attempt == 1 else f"root-retry-{attempt}"
             pass_by_id: dict[str, JobRecord] = {}
+            unstable_job_id: str | None = None
             if total_pages == 0:
                 self._save_payload(channel, attempt_partition, 1, payload)
 
@@ -128,23 +145,31 @@ class AntConnector:
                     if previous is not None and (
                         previous.content_hash() != record.content_hash()
                     ):
-                        raise RuntimeError(
-                            f"Ant returned conflicting job {record.external_id} "
-                            f"within {attempt_partition}"
-                        )
+                        unstable_job_id = record.external_id
+                        break
                     pass_by_id[record.external_id] = record
+                if unstable_job_id is not None:
+                    break
                 if page_number < total_pages:
                     payload = await self._fetch_page(page_number + 1)
+
+            if unstable_job_id is not None:
+                last_unstable_job_id = unstable_job_id
+                union_by_id.clear()
+                continue
 
             for external_id, record in pass_by_id.items():
                 previous = union_by_id.get(external_id)
                 if previous is not None and (
                     previous.content_hash() != record.content_hash()
                 ):
-                    raise RuntimeError(
-                        f"Ant changed job {external_id} during root retries"
-                    )
+                    unstable_job_id = external_id
+                    break
                 union_by_id[external_id] = record
+            if unstable_job_id is not None:
+                last_unstable_job_id = unstable_job_id
+                union_by_id.clear()
+                continue
             if len(union_by_id) == total_count:
                 return union_by_id, True
             if len(union_by_id) > total_count:
@@ -155,49 +180,42 @@ class AntConnector:
 
         raise RuntimeError(
             f"Ant root list did not converge after {MAX_COLLECTION_ATTEMPTS} attempts: "
-            f"declared={total_count}, union={len(union_by_id)}"
+            f"declared={total_count}, union={len(union_by_id)}, "
+            f"last_unstable_job={last_unstable_job_id}"
         )
 
     async def _open_root(self) -> dict[str, Any]:
-        if self._position_api_url is not None:
-            return await self._fetch_page(1)
-        await self._rate_limit()
-        drain_json_responses(self._position_responses)
+        if not self._session_initialized:
+            await self.page.context.add_cookies(
+                [
+                    {
+                        "name": "ctoken",
+                        "value": self._csrf_token,
+                        "domain": ".antgroup.com",
+                        "path": "/",
+                    }
+                ]
+            )
+            await self.page.goto(
+                BOOTSTRAP_URL,
+                wait_until="commit",
+                timeout=60_000,
+            )
+            await self.page.evaluate("window.stop()")
+            self._session_initialized = True
         if self._category_catalog is None:
-            drain_json_responses(self._category_responses)
-        self._active_category_code = ""
-        await self.page.goto(
-            POSITION_LIST_URL,
-            wait_until="domcontentloaded",
-            timeout=60_000,
-        )
-        await self._next_payload("positions:root:1")
-        if self._category_catalog is None:
-            category_payload = await next_json_payload(
-                self._category_responses,
-                timeout_seconds=RESPONSE_TIMEOUT_SECONDS,
-                operation="Ant category catalog",
+            category_payload = await self._post_json(
+                CATEGORY_API_URL,
+                data={},
+                operation="category catalog",
             )
             self._category_catalog = self.parse_category_catalog(category_payload)
             self._save_category_catalog(category_payload)
-        if self._position_api_url is None:
-            raise RuntimeError("Ant position API URL was not observed")
-        # Unload the large recruitment SPA after it supplied the public token
-        # and category catalog. All position pages use the official JSON API.
-        await self.page.goto(
-            "about:blank",
-            wait_until="commit",
-            timeout=60_000,
-        )
         return await self._fetch_page(1)
 
     async def _fetch_page(self, page_number: int) -> dict[str, Any]:
-        if self._position_api_url is None:
-            raise RuntimeError("Ant position API URL is unavailable")
-        await self._rate_limit()
-        response = await self.page.request.post(
-            self._position_api_url,
-            headers={"Content-Type": "application/json"},
+        return await self._post_json(
+            POSITION_API_URL,
             data={
                 "key": "",
                 "regions": "",
@@ -210,30 +228,29 @@ class AntConnector:
                 "channel": "group_official_site",
                 "language": "zh",
             },
-            timeout=60_000,
-            fail_on_status_code=False,
+            operation=f"page {page_number}",
         )
-        if response.status != 200:
-            raise RuntimeError(
-                f"Ant page {page_number} returned HTTP {response.status}"
-            )
-        payload = await response.json()
-        if not isinstance(payload, dict):
-            raise RuntimeError(f"Ant page {page_number} returned invalid JSON")
-        if payload.get("success") is not True or not isinstance(
-            payload.get("content"), list
-        ):
-            message = json.dumps(payload, ensure_ascii=False)[:1000]
-            raise RuntimeError(f"Invalid Ant response for page {page_number}: {message}")
-        self._last_request_at = asyncio.get_running_loop().time()
-        return payload
 
-    async def _next_payload(self, operation: str) -> dict[str, Any]:
-        payload = await next_json_payload(
-            self._position_responses,
-            timeout_seconds=RESPONSE_TIMEOUT_SECONDS,
-            operation=f"Ant response: {operation}",
+    async def _post_json(
+        self,
+        url: str,
+        *,
+        data: dict[str, Any],
+        operation: str,
+    ) -> dict[str, Any]:
+        await self._rate_limit()
+        result = await self.page.evaluate(
+            FETCH_JSON_SCRIPT,
+            {"url": url, "token": self._csrf_token, "data": data},
         )
+        if not isinstance(result, dict):
+            raise RuntimeError(f"Ant {operation} returned an invalid fetch result")
+        status = result.get("status")
+        if status != 200:
+            raise RuntimeError(f"Ant {operation} returned HTTP {status}")
+        payload = result.get("payload")
+        if not isinstance(payload, dict):
+            raise RuntimeError(f"Ant {operation} returned invalid JSON")
         if payload.get("success") is not True or not isinstance(
             payload.get("content"), list
         ):
@@ -368,34 +385,6 @@ class AntConnector:
             ],
             source_payload=raw,
         )
-
-    def _record_response(self, response: Response) -> None:
-        if (
-            response.status == 200
-            and "/api/social/category/list" in response.url
-            and "/listDept" not in response.url
-            and self._category_catalog is None
-        ):
-            enqueue_json_response(self._category_responses, response)
-            return
-        if (
-            response.status == 200
-            and "/api/social/position/search" in response.url
-        ):
-            try:
-                post_data = response.request.post_data_json
-            except Exception:
-                return
-            if not isinstance(post_data, dict):
-                return
-            self._position_api_url = response.url
-            if post_data.get("pageSize") != 10:
-                return
-            if _optional(post_data.get("categories")) != (
-                self._active_category_code or None
-            ):
-                return
-            enqueue_json_response(self._position_responses, response)
 
     async def _rate_limit(self) -> None:
         delay = self.settings.ant_request_delay_seconds - (
