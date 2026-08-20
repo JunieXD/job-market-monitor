@@ -22,6 +22,7 @@ from job_market.models import (
     JobVersion,
     JobVersionBusinessUnit,
     JobVersionLocation,
+    JobVersionLocationCity,
     JobVersionSourceCategory,
     Location,
     RawSnapshot,
@@ -32,9 +33,8 @@ from job_market.models import (
     SourceLocationMapping,
 )
 from job_market.normalization import (
-    canonical_location_key,
-    is_city_level_name,
-    normalize_city_name,
+    canonical_city_key,
+    normalize_city_names,
 )
 from job_market.profiling import profile_source_fields
 from job_market.schemas import (
@@ -445,6 +445,7 @@ class Repository:
                 job.last_seen_at = now
                 self._sync_current_locations(session, job.id, locations)
                 self._ensure_version_locations(session, version.id, locations)
+                self._ensure_version_location_cities(session, version.id, locations)
                 self._ensure_version_business_units(session, version.id, business_units)
                 self._ensure_version_categories(session, version.id, source_categories)
                 session.add(
@@ -883,34 +884,47 @@ class Repository:
         record: LocationRecord,
         now: datetime,
     ) -> None:
-        normalized_name = normalize_city_name(record.name)
-        mapping = session.scalar(
-            select(SourceLocationMapping).where(
-                SourceLocationMapping.location_id == location.id,
-                SourceLocationMapping.is_current.is_(True),
+        mappings = list(
+            session.scalars(
+                select(SourceLocationMapping).where(
+                    SourceLocationMapping.location_id == location.id,
+                    SourceLocationMapping.is_current.is_(True),
+                )
             )
         )
-        if not is_city_level_name(record.name):
-            if mapping is None or mapping.mapping_method in AUTO_LOCATION_MAPPING_METHODS:
-                if mapping is not None:
+        manual_mappings = [
+            mapping
+            for mapping in mappings
+            if mapping.mapping_method not in AUTO_LOCATION_MAPPING_METHODS
+        ]
+        if manual_mappings:
+            # A published manual/model mapping always wins over automatic
+            # name matching until another mapping is explicitly published.
+            for mapping in mappings:
+                if mapping.mapping_method in AUTO_LOCATION_MAPPING_METHODS:
                     mapping.is_current = False
-                return
             return
-        key = canonical_location_key(record)
-        if mapping is not None:
-            mapped_location = session.get(
-                CanonicalLocation,
-                mapping.canonical_location_id,
-            )
-            if mapped_location is not None and mapped_location.key == key:
-                Repository._enrich_canonical_location(mapped_location, record)
-                return
-            if mapping.mapping_method not in AUTO_LOCATION_MAPPING_METHODS:
-                # A published manual/model mapping always wins over automatic
-                # name matching until another mapping is explicitly published.
-                return
+
+        for mapping in mappings:
             mapping.is_current = False
-            session.flush()
+        for city_name in normalize_city_names(record.name):
+            Repository._ensure_canonical_city_mapping(
+                session,
+                location,
+                record,
+                city_name,
+                now,
+            )
+
+    @staticmethod
+    def _ensure_canonical_city_mapping(
+        session: Session,
+        location: Location,
+        record: LocationRecord,
+        city_name: str,
+        now: datetime,
+    ) -> None:
+        key = canonical_city_key(city_name)
         canonical = session.scalar(
             select(CanonicalLocation).where(CanonicalLocation.key == key)
         )
@@ -918,23 +932,21 @@ class Repository:
             canonical = CanonicalLocation(
                 key=key,
                 level="city",
-                name=normalized_name,
+                name=city_name,
                 country_code=record.country_code,
                 country_name=record.country_name,
                 state_code=record.state_code,
                 state_name=record.state_name,
-                city_name=normalized_name,
+                city_name=city_name,
                 created_at=now,
             )
             session.add(canonical)
             session.flush()
         else:
-            # Canonical labels are derived display fields. Keep the source
-            # location untouched while ensuring analytics never split 市 suffixes.
-            canonical.name = normalized_name
-            canonical.city_name = normalized_name
+            canonical.name = city_name
+            canonical.city_name = city_name
             Repository._enrich_canonical_location(canonical, record)
-        mapping_version = f"auto-city-name-v4-{key}"
+        mapping_version = f"auto-city-name-v5-{key}"
         replacement = session.scalar(
             select(SourceLocationMapping).where(
                 SourceLocationMapping.location_id == location.id,
@@ -942,16 +954,17 @@ class Repository:
             )
         )
         if replacement is None:
-            replacement = SourceLocationMapping(
-                location_id=location.id,
-                canonical_location_id=canonical.id,
-                mapping_method="normalized_city_name",
-                mapping_version=mapping_version,
-                is_current=True,
-                confidence=Decimal("0.9900"),
-                created_at=now,
+            session.add(
+                SourceLocationMapping(
+                    location_id=location.id,
+                    canonical_location_id=canonical.id,
+                    mapping_method="normalized_city_name",
+                    mapping_version=mapping_version,
+                    is_current=True,
+                    confidence=Decimal("0.9900"),
+                    created_at=now,
+                )
             )
-            session.add(replacement)
         else:
             if replacement.canonical_location_id != canonical.id:
                 raise RuntimeError(
@@ -993,12 +1006,15 @@ class Repository:
         )
         for location in locations:
             if location.id not in existing_ids:
-                mapping = session.scalar(
-                    select(SourceLocationMapping).where(
-                        SourceLocationMapping.location_id == location.id,
-                        SourceLocationMapping.is_current.is_(True),
+                mappings = list(
+                    session.scalars(
+                        select(SourceLocationMapping).where(
+                            SourceLocationMapping.location_id == location.id,
+                            SourceLocationMapping.is_current.is_(True),
+                        )
                     )
                 )
+                mapping = mappings[0] if len(mappings) == 1 else None
                 session.add(
                     JobVersionLocation(
                         job_version_id=version_id,
@@ -1013,6 +1029,43 @@ class Repository:
                         ),
                     )
                 )
+
+    @staticmethod
+    def _ensure_version_location_cities(
+        session: Session,
+        version_id: int,
+        locations: list[Location],
+    ) -> None:
+        existing_keys = {
+            (item.location_id, item.canonical_location_id)
+            for item in session.scalars(
+                select(JobVersionLocationCity).where(
+                    JobVersionLocationCity.job_version_id == version_id
+                )
+            )
+        }
+        for location in locations:
+            mappings = session.scalars(
+                select(SourceLocationMapping).where(
+                    SourceLocationMapping.location_id == location.id,
+                    SourceLocationMapping.is_current.is_(True),
+                )
+            )
+            for mapping in mappings:
+                key = (location.id, mapping.canonical_location_id)
+                if key in existing_keys:
+                    continue
+                session.add(
+                    JobVersionLocationCity(
+                        job_version_id=version_id,
+                        location_id=location.id,
+                        canonical_location_id=mapping.canonical_location_id,
+                        mapping_method=mapping.mapping_method,
+                        mapping_version=mapping.mapping_version,
+                        mapping_confidence=mapping.confidence,
+                    )
+                )
+                existing_keys.add(key)
 
     @staticmethod
     def _upsert_business_units(

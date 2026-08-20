@@ -380,15 +380,15 @@ class AnalyticsRepository:
                 {where}
                 GROUP BY ds.snapshot_date
             ), version_location_counts AS (
-                SELECT job_version_id, COUNT(*) AS location_count
-                FROM job_version_locations
+                SELECT job_version_id,
+                       COUNT(DISTINCT canonical_location_id) AS location_count
+                FROM job_version_location_cities
                 GROUP BY job_version_id
             ), city_counts AS (
                 SELECT ds.snapshot_date, ds.channel{company_columns},
-                       jvl.canonical_location_id,
+                       jvlc.canonical_location_id,
                        cl.key AS canonical_location_key,
-                       CASE WHEN cl.id IS NULL THEN '未明确城市' ELSE cl.name END
-                           AS city_name,
+                       cl.name AS city_name,
                        cl.country_name, cl.state_name,
                        COUNT(DISTINCT jo.job_id) AS posting_count,
                        SUM(1.0 / vlc.location_count) AS fractional_posting_count
@@ -398,15 +398,15 @@ class AnalyticsRepository:
                 {company_joins}
                 JOIN job_observations AS jo
                     ON jo.crawl_run_id = ds.crawl_run_id
-                JOIN job_version_locations AS jvl
-                    ON jvl.job_version_id = jo.job_version_id
+                JOIN job_version_location_cities AS jvlc
+                    ON jvlc.job_version_id = jo.job_version_id
                 JOIN version_location_counts AS vlc
                     ON vlc.job_version_id = jo.job_version_id
-                LEFT JOIN canonical_locations AS cl
-                    ON cl.id = jvl.canonical_location_id
+                JOIN canonical_locations AS cl
+                    ON cl.id = jvlc.canonical_location_id
                 {where}
                 GROUP BY ds.snapshot_date, ds.channel{group_company},
-                         jvl.canonical_location_id, cl.key, cl.id, cl.name,
+                         jvlc.canonical_location_id, cl.key, cl.id, cl.name,
                          cl.country_name, cl.state_name
             )
             SELECT city_counts.*,

@@ -69,7 +69,7 @@ export function CitiesPage() {
         <div><span>已选公司</span><strong>{formatNumber(selectedCompanyCount)}</strong></div>
       </div>
       <div className="content-grid city-grid">
-        <Panel className="span-7 city-panel" title="城市岗位热度" note="岗位涉及该城市即完整计 1">
+        <Panel className="span-7 city-panel" title="城市岗位热度" note="城市覆盖率 = 涉及该城市的岗位数 / 全部唯一岗位数">
           {loading && !result ? <LoadingBlock /> : rows.length ? <Chart option={chart} ariaLabel="城市岗位热度排行" className="chart-tall" /> : <EmptyState title="暂无城市分布数据" />}
         </Panel>
         <Panel className="span-5 city-panel" title="城市排行" note={coverage?.snapshot_date ? `更新至 ${coverage.snapshot_date}` : "暂无数据"}>
@@ -102,5 +102,20 @@ function groupCities(rows: CityRow[]): GroupedCity[] {
 
 function cityOption(rows: GroupedCity[]): EChartsOption {
   const top = rows.slice(0, 12).reverse();
-  return { color: ["#c5554d"], tooltip: { trigger: "axis", axisPointer: { type: "shadow" } }, grid: { left: 84, right: 26, top: 12, bottom: 26 }, xAxis: { type: "value", minInterval: 1, splitLine: { lineStyle: { color: "#e9eef0" } } }, yAxis: { type: "category", data: top.map((row) => row.name) }, series: [{ type: "bar", barMaxWidth: 22, data: top.map((row) => row.postingCount) }] };
+  return {
+    color: ["#c5554d"],
+    tooltip: {
+      trigger: "axis",
+      axisPointer: { type: "shadow" },
+      valueFormatter: (value) => formatPercent(Number(value)),
+    },
+    grid: { left: 84, right: 26, top: 12, bottom: 26 },
+    xAxis: {
+      type: "value",
+      axisLabel: { formatter: (value: number) => formatPercent(value) },
+      splitLine: { lineStyle: { color: "#e9eef0" } },
+    },
+    yAxis: { type: "category", data: top.map((row) => row.name) },
+    series: [{ type: "bar", barMaxWidth: 22, data: top.map((row) => row.share) }],
+  };
 }

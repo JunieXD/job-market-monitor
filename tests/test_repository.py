@@ -16,6 +16,7 @@ from job_market.models import (
     JobVersion,
     JobVersionBusinessUnit,
     JobVersionLocation,
+    JobVersionLocationCity,
     JobVersionSourceCategory,
     Location,
     RawSnapshot,
@@ -146,6 +147,40 @@ def test_location_facts_stay_raw_while_city_mapping_uses_city_parts() -> None:
         assert canonical_names == ["成都"]
         version_locations = session.scalars(select(JobVersionLocation)).all()
         assert sum(item.canonical_location_id is None for item in version_locations) == 1
+
+    assert DataQualityChecker(repository.engine).run()["ok"] is True
+
+
+def test_multi_city_location_keeps_raw_label_and_creates_city_links() -> None:
+    repository, _ = make_repository()
+    source_id = repository.ensure_source()
+    locations = [
+        LocationRecord(code="MULTI", name="厦门市/福州市/漳州"),
+        LocationRecord(code="HIER", name="泉州市·晋江市"),
+    ]
+    run_id = repository.start_run(source_id, Channel.CAMPUS.value)
+    repository.ingest(run_id, result([make_job(locations=locations)]))
+
+    with Session(repository.engine) as session:
+        assert session.scalars(select(Location.name).order_by(Location.code)).all() == [
+            "泉州市·晋江市",
+            "厦门市/福州市/漳州",
+        ]
+        mappings = session.scalars(
+            select(SourceLocationMapping).where(
+                SourceLocationMapping.is_current.is_(True)
+            )
+        ).all()
+        canonical_names = session.scalars(
+            select(CanonicalLocation.name)
+            .where(
+                CanonicalLocation.id.in_([item.canonical_location_id for item in mappings])
+            )
+            .order_by(CanonicalLocation.name)
+        ).all()
+        assert set(canonical_names) == {"厦门", "福州", "漳州", "泉州"}
+        city_links = session.scalars(select(JobVersionLocationCity)).all()
+        assert len(city_links) == 4
 
     assert DataQualityChecker(repository.engine).run()["ok"] is True
 

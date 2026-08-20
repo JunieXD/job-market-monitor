@@ -2,6 +2,7 @@ from job_market.normalization import (
     canonical_location_key,
     is_city_level_name,
     normalize_city_name,
+    normalize_city_names,
 )
 from job_market.schemas import LocationRecord
 
@@ -46,3 +47,20 @@ def test_city_name_normalization_does_not_invent_a_city_from_regions() -> None:
     assert is_city_level_name("四川省") is False
     assert is_city_level_name("全国") is False
     assert is_city_level_name("四川省·成都") is True
+
+
+def test_city_name_normalization_splits_city_lists_and_keeps_city_hierarchy() -> None:
+    assert normalize_city_names("厦门市/福州市/漳州") == ["厦门", "福州", "漳州"]
+    assert normalize_city_names("福建省·福州市/漳州市/厦门市/泉州市") == [
+        "福州",
+        "漳州",
+        "厦门",
+        "泉州",
+    ]
+    assert normalize_city_names("泉州市·晋江市") == ["泉州"]
+    assert normalize_city_names("江苏省·南京市/徐州市/南通市/淮安市") == [
+        "南京",
+        "徐州",
+        "南通",
+        "淮安",
+    ]

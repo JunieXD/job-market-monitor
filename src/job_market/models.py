@@ -327,6 +327,31 @@ class JobVersionLocation(Base):
     mapping_confidence: Mapped[Decimal | None] = mapped_column(Numeric(5, 4))
 
 
+class JobVersionLocationCity(Base):
+    __tablename__ = "job_version_location_cities"
+    __table_args__ = (
+        Index(
+            "ix_job_version_location_cities_canonical",
+            "canonical_location_id",
+        ),
+    )
+
+    job_version_id: Mapped[int] = mapped_column(
+        ForeignKey("job_versions.id"), primary_key=True
+    )
+    location_id: Mapped[int] = mapped_column(
+        ForeignKey("locations.id"), primary_key=True
+    )
+    canonical_location_id: Mapped[int] = mapped_column(
+        ForeignKey("canonical_locations.id"), primary_key=True
+    )
+    mapping_method: Mapped[str] = mapped_column(String(30), nullable=False)
+    mapping_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    mapping_confidence: Mapped[Decimal] = mapped_column(
+        Numeric(5, 4), nullable=False
+    )
+
+
 class JobVersionBusinessUnit(Base):
     __tablename__ = "job_version_business_units"
 
@@ -469,13 +494,6 @@ class SourceLocationMapping(Base):
         ),
         CheckConstraint("confidence >= 0 AND confidence <= 1", name="ck_location_confidence"),
         Index("ix_source_location_mappings_current", "location_id", "is_current"),
-        Index(
-            "uq_source_location_mappings_one_current",
-            "location_id",
-            unique=True,
-            postgresql_where=text("is_current"),
-            sqlite_where=text("is_current = 1"),
-        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)

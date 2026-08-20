@@ -42,9 +42,11 @@
 - `job_observations` 表示某次完整采集看到了某个岗位，并且必须指向当时准确的
   `job_version_id`。
 - `job_version_locations` 保存某个岗位版本当时对应的全部地点。
+- `job_version_location_cities` 保存每个来源地点派生出的城市级关联；一个原始地点标签可以对应多个
+  城市，因此同一个岗位版本和来源地点可以有多条记录。
 - `job_version_source_categories` 保存当时的全部来源分类及赋值方法。
 
-`job_version_locations` 和 `job_version_source_categories` 同时保存该版本观测时使用的统一维度
+`job_version_locations`、`job_version_location_cities` 和 `job_version_source_categories` 同时保存该版本观测时使用的统一维度
 映射 ID、映射版本、方法和置信度。后续发布新的当前映射不会改写旧岗位版本；历史分析必须优先使用
 这些版本快照字段，而不能直接连接 `is_current` 映射。
 - `job_locations` 只用于快速查询岗位的最新地点，不能用于历史分析。
@@ -117,7 +119,7 @@
 
 地点同样分层：
 
-- `locations` 保存来源地点编码和名称。
+- `locations` 保存来源地点编码和名称；`job_version_location_cities` 保存地点对应的城市级派生关系。
 - `canonical_locations` 保存跨来源统一地点。
 - `source_location_mappings` 保存版本化映射。
 
@@ -131,7 +133,9 @@ API 同时保留 `source_name` 供追溯；历史快照的自动地点映射也�
 丰富的国家/省信息只用于补全统一城市展示。自动映射保留方法、版本和置信度，遇到跨国家同名
 城市等歧义时必须发布人工映射覆盖，且来源地点原文不会被改写。
 
-每个来源分类或地点最多只能有一条 `is_current = true` 的映射，数据库使用部分唯一索引保证。
+每个来源分类最多只能有一条 `is_current = true` 的映射。一个包含多个城市的来源地点可以有多条
+当前自动城市映射；`job_version_location_cities` 保存观测时实际使用的版本化城市关联。人工或模型
+映射仍优先于自动拆分。
 
 业务单元采用来源事实维度：
 

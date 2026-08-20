@@ -228,7 +228,7 @@ def test_market_city_view_unifies_same_city_across_sources() -> None:
     assert DataQualityChecker(engine).run()["ok"] is True
 
 
-def test_city_distribution_uses_friendly_label_for_non_city_locations() -> None:
+def test_city_distribution_omits_non_city_locations() -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:")
     create_schema(engine)
     clock = Clock()
@@ -250,9 +250,45 @@ def test_city_distribution_uses_friendly_label_for_non_city_locations() -> None:
         channel=Channel.CAMPUS.value,
     )
 
-    assert len(rows) == 1
-    assert rows[0]["city_name"] == "未明确城市"
-    assert rows[0]["canonical_location_key"] is None
+    assert rows == []
+
+
+def test_city_distribution_splits_multi_city_location_labels() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    clock = Clock()
+    repository = Repository(engine, clock=clock)
+    source_id = repository.ensure_source()
+    run_id = repository.start_run(source_id, Channel.CAMPUS.value)
+    repository.ingest(
+        run_id,
+        CollectionResult(
+            channel=Channel.CAMPUS,
+            jobs=[
+                make_job(
+                    "multi-city-job",
+                    title="多城市岗位",
+                    category_id="operations",
+                    category_name="运营",
+                    locations=[LocationRecord(code="MULTI", name="厦门市/福州市/漳州")],
+                )
+            ],
+            snapshots=[],
+            partition_counts={"all": 1},
+            pages_fetched=1,
+            complete=True,
+        ),
+    )
+
+    rows = AnalyticsRepository(engine).city_distribution(
+        company_key="bytedance",
+        snapshot_date=clock().date(),
+        channel=Channel.CAMPUS.value,
+    )
+
+    assert {row["city_name"] for row in rows} == {"厦门", "福州", "漳州"}
+    assert all(row["posting_count"] == 1 for row in rows)
+    assert all(float(row["posting_share"]) == pytest.approx(1.0) for row in rows)
 
 
 def test_multi_category_and_unclassified_jobs_remain_distinct() -> None:

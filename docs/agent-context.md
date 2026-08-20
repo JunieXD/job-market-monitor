@@ -126,7 +126,8 @@ Chromium。
 - `jobs`：来源内稳定岗位身份
 - `job_versions`：岗位正文、标题、要求等内容版本，内容未变化时复用
 - `job_observations`：某次采集看到了哪个岗位版本
-- `job_version_locations`、`job_version_source_categories`：岗位版本的城市和官网分类事实
+- `job_version_locations`、`job_version_location_cities`、`job_version_source_categories`：岗位版本的
+  原始地点、城市级派生关联和官网分类事实
 - `daily_snapshots`：来源/渠道当天最后一次完整权威快照
 - `job_lifecycle_events`：首次出现、变更、缺失、关闭、恢复、重新开放
 - `raw_snapshots`、字段统计和采集运行表：原始证据、覆盖率、问题和进度

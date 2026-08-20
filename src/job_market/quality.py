@@ -16,6 +16,7 @@ from job_market.models import (
     JobObservation,
     JobVersion,
     JobVersionLocation,
+    JobVersionLocationCity,
     JobVersionSourceCategory,
     Location,
     RawSnapshot,
@@ -24,7 +25,9 @@ from job_market.models import (
     SourceChannel,
     SourceLocationMapping,
 )
-from job_market.normalization import is_city_level_name
+from job_market.normalization import normalize_city_names
+
+AUTO_LOCATION_MAPPING_METHODS = {"exact_source_fields", "normalized_city_name"}
 
 
 class DataQualityChecker:
@@ -49,6 +52,10 @@ class DataQualityChecker:
                 "job_lifecycle_events": self._count(session, JobLifecycleEvent),
                 "locations": self._count(session, Location),
                 "job_version_locations": self._count(session, JobVersionLocation),
+                "job_version_location_cities": self._count(
+                    session,
+                    JobVersionLocationCity,
+                ),
                 "raw_snapshots": self._count(session, RawSnapshot),
             }
             checks: dict[str, Callable[[Session], int]] = {
@@ -353,9 +360,25 @@ class DataQualityChecker:
             location_id: mapping_count
             for location_id, mapping_count in mapping_rows
         }
+        current_methods: dict[int, list[str]] = {}
+        for location_id, mapping_method in session.execute(
+            select(
+                SourceLocationMapping.location_id,
+                SourceLocationMapping.mapping_method,
+            ).where(SourceLocationMapping.is_current.is_(True))
+        ):
+            current_methods.setdefault(location_id, []).append(mapping_method)
         locations = session.execute(select(Location.id, Location.name))
         return sum(
-            count != 1 if is_city_level_name(name) else count > 1
+            count
+            != (
+                1
+                if any(
+                    method not in AUTO_LOCATION_MAPPING_METHODS
+                    for method in current_methods.get(location_id, [])
+                )
+                else len(normalize_city_names(name))
+            )
             for location_id, name in locations
             for count in (mapping_counts.get(location_id, 0),)
         )
