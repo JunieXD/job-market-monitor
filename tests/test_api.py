@@ -48,7 +48,7 @@ def make_api_client() -> TestClient:
                 assignment_method=CategoryAssignmentMethod.DIRECT_FIELD,
             )
         ],
-        locations=[LocationRecord(code="BJ", name="北京")],
+        locations=[LocationRecord(code="BJ", name="北京市")],
         source_payload={"id": "api-job-1"},
     )
     run_id = repository.start_run(source_id, Channel.CAMPUS.value)
@@ -138,6 +138,7 @@ def test_api_exposes_health_overview_and_read_only_job_queries() -> None:
         assert detail_body["source_name"] == "字节跳动中国招聘官网"
         assert detail_body["employment_type_name"] == "实习"
         assert detail_body["locations"][0]["name"] == "北京"
+        assert detail_body["locations"][0]["source_name"] == "北京市"
         assert detail_body["categories"] == [
             {
                 "external_id": "backend",
@@ -172,6 +173,20 @@ def test_api_returns_analysis_envelopes_for_categories_and_cities() -> None:
             "后端"
         )
         assert categories.json()["meta"]["coverage"]["coverage_ratio"] == 0.5
+
+        locations = client.get("/api/v1/meta/locations")
+        assert locations.status_code == 200
+        assert locations.json()["data"] == [
+            {
+                "code": "BJ",
+                "name": "北京",
+                "source_name": "北京市",
+                "source_key": "bytedance_cn",
+                "company_name": "字节跳动",
+                "country_name": None,
+                "state_name": None,
+            }
+        ]
 
         cities = client.get(
             "/api/v1/distributions/cities",

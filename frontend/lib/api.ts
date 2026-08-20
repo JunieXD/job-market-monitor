@@ -94,6 +94,7 @@ export type JobDetail = JobRow & {
   locations: Array<{
     code: string;
     name: string;
+    source_name: string;
     country_name: string | null;
     state_name: string | null;
     district_name: string | null;

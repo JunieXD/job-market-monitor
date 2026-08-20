@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from job_market.db import create_schema
 from job_market.dimensions import DimensionRepository
 from job_market.models import (
+    CanonicalLocation,
     CategoryMapping,
     JobVersion,
     JobVersionLocation,
@@ -25,6 +26,24 @@ from job_market.schemas import (
     LocationRecord,
     SourceCategoryRecord,
 )
+
+
+def test_canonical_city_display_name_is_normalized_without_changing_source_location() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    dimensions = DimensionRepository(engine)
+
+    location_id = dimensions.add_canonical_location(
+        key="cn-beijing-display",
+        name="北京市",
+        city_name="北京市",
+    )
+
+    with Session(engine) as session:
+        location = session.get(CanonicalLocation, location_id)
+        assert location is not None
+        assert location.name == "北京"
+        assert location.city_name == "北京"
 
 
 def test_mapping_publications_are_versioned_and_only_one_is_current() -> None:

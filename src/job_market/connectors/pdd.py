@@ -8,7 +8,7 @@ from math import ceil
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from playwright.async_api import Page, Response, Route
+from playwright.async_api import Page, Response
 
 from job_market.config import Settings
 from job_market.connectors.browser_json import (
@@ -97,7 +97,6 @@ class PDDConnector:
         if portal is None:
             raise ValueError("PDD connector supports only campus and internship channels")
 
-        await self.page.route("**/*", _skip_nonessential_assets)
         payload = await self._open_first_page(portal)
         first = self._list_page(payload, expected_page=1)
         total_count = first["total"]
@@ -200,7 +199,6 @@ class PDDConnector:
         extra_pages: list[Page] = []
         for _ in range(min(DETAIL_CONCURRENCY, len(list_rows)) - 1):
             detail_page = await self.page.context.new_page()
-            await detail_page.route("**/*", _skip_nonessential_assets)
             detail_queue: JsonResponseQueue = asyncio.Queue()
             detail_page.on(
                 "response",
@@ -484,12 +482,6 @@ class PDDConnector:
                 )
             )
 
-
-async def _skip_nonessential_assets(route: Route) -> None:
-    if route.request.resource_type in {"image", "media", "font"}:
-        await route.abort()
-    else:
-        await route.continue_()
 
 
 def _optional(value: Any) -> str | None:

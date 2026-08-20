@@ -31,7 +31,7 @@ from job_market.models import (
     SourceChannel,
     SourceLocationMapping,
 )
-from job_market.normalization import canonical_location_key
+from job_market.normalization import canonical_location_key, normalize_city_name
 from job_market.profiling import profile_source_fields
 from job_market.schemas import (
     SOURCE_FACT_CONTRACT_VERSION,
@@ -879,6 +879,7 @@ class Repository:
         record: LocationRecord,
         now: datetime,
     ) -> None:
+        normalized_name = normalize_city_name(record.name)
         key = canonical_location_key(record)
         mapping = session.scalar(
             select(SourceLocationMapping).where(
@@ -907,17 +908,21 @@ class Repository:
             canonical = CanonicalLocation(
                 key=key,
                 level="city",
-                name=record.name,
+                name=normalized_name,
                 country_code=record.country_code,
                 country_name=record.country_name,
                 state_code=record.state_code,
                 state_name=record.state_name,
-                city_name=record.name,
+                city_name=normalized_name,
                 created_at=now,
             )
             session.add(canonical)
             session.flush()
         else:
+            # Canonical labels are derived display fields. Keep the source
+            # location untouched while ensuring analytics never split 市 suffixes.
+            canonical.name = normalized_name
+            canonical.city_name = normalized_name
             Repository._enrich_canonical_location(canonical, record)
         mapping_version = f"auto-city-name-v2-{key}"
         replacement = session.scalar(

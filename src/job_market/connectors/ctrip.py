@@ -8,7 +8,7 @@ from math import ceil
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from playwright.async_api import Page, Response, Route
+from playwright.async_api import Page, Response
 
 from job_market.config import Settings
 from job_market.connectors.browser_json import (
@@ -92,7 +92,6 @@ class CtripConnector:
         if channel is not Channel.GENERAL:
             raise ValueError("Ctrip connector supports only the general channel")
 
-        await self.page.route("**/*", _skip_nonessential_assets)
         payload = await self._open_collection_page()
         first = self._position_page(
             payload,
@@ -357,12 +356,6 @@ class CtripConnector:
                 )
             )
 
-
-async def _skip_nonessential_assets(route: Route) -> None:
-    if route.request.resource_type in {"image", "media", "font"}:
-        await route.abort()
-    else:
-        await route.continue_()
 
 
 def _optional(value: Any) -> str | None:

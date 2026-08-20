@@ -8,7 +8,7 @@ from math import ceil
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from playwright.async_api import Page, Response, Route
+from playwright.async_api import Page, Response
 
 from job_market.config import Settings
 from job_market.connectors.browser_json import (
@@ -65,7 +65,6 @@ class OppoConnector:
         if channel is not Channel.EXPERIENCED:
             raise ValueError("OPPO connector supports only the experienced channel")
 
-        await self.page.route("**/*", _skip_nonessential_assets)
         payload, category_payload, degree_payload = await self._open_first_page()
         category_names = self.parse_dictionary(category_payload, "JOB-TYPE")
         degree_names = self.parse_dictionary(degree_payload, "EDUCATION-REQUIRE")
@@ -371,12 +370,6 @@ class OppoConnector:
                 )
             )
 
-
-async def _skip_nonessential_assets(route: Route) -> None:
-    if route.request.resource_type in {"image", "media", "font"}:
-        await route.abort()
-    else:
-        await route.continue_()
 
 
 def _optional(value: Any) -> str | None:

@@ -8,7 +8,7 @@ from html.parser import HTMLParser
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from playwright.async_api import Page, Response, Route
+from playwright.async_api import Page, Response
 
 from job_market.config import Settings
 from job_market.connectors.browser_json import (
@@ -70,7 +70,6 @@ class Qihu360Connector:
         if channel is not Channel.EXPERIENCED:
             raise ValueError("360 connector supports only the experienced channel")
 
-        await self.page.route("**/*", _skip_nonessential_assets)
         payload = await self._open_list()
         rows, total_count = self._list_rows(payload)
         self.pages_fetched = 1
@@ -126,7 +125,6 @@ class Qihu360Connector:
         extra_pages: list[Page] = []
         for _ in range(min(DETAIL_CONCURRENCY, len(list_rows)) - 1):
             detail_page = await self.page.context.new_page()
-            await detail_page.route("**/*", _skip_nonessential_assets)
             detail_queue: JsonResponseQueue = asyncio.Queue()
             detail_page.on(
                 "response",
@@ -350,12 +348,6 @@ class Qihu360Connector:
                 )
             )
 
-
-async def _skip_nonessential_assets(route: Route) -> None:
-    if route.request.resource_type in {"image", "media", "font"}:
-        await route.abort()
-    else:
-        await route.continue_()
 
 
 def _optional(value: Any) -> str | None:

@@ -8,7 +8,7 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 from zoneinfo import ZoneInfo
 
-from playwright.async_api import Page, Response, Route
+from playwright.async_api import Page, Response
 
 from job_market.config import Settings
 from job_market.connectors.browser_json import (
@@ -71,7 +71,6 @@ class IqiyiConnector:
         if channel not in POSITION_LIST_URLS:
             raise ValueError("iQIYI connector supports experienced and campus jobs")
 
-        await self.page.route("**/*", _skip_nonessential_assets)
         initial_payload = await self._open_root(channel)
         initial_total = self._position_page(
             initial_payload,
@@ -358,12 +357,6 @@ class IqiyiConnector:
                 )
             )
 
-
-async def _skip_nonessential_assets(route: Route) -> None:
-    if route.request.resource_type in {"image", "media", "font"}:
-        await route.abort()
-    else:
-        await route.continue_()
 
 
 def _optional(value: Any) -> str | None:

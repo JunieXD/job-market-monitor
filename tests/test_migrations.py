@@ -52,7 +52,7 @@ def test_fresh_migrations_match_models_and_create_analysis_views() -> None:
             text("SELECT version_num FROM alembic_version")
         ).scalar_one()
         drift = compare_metadata(MigrationContext.configure(connection), Base.metadata)
-    assert revision == "0015"
+    assert revision == "0016"
     assert drift == []
     columns = {item["name"]: item for item in inspect(engine).get_columns("jobs")}
     run_columns = {
@@ -229,6 +229,233 @@ def test_city_mapping_migration_unifies_sources_with_different_metadata() -> Non
         assert canonical.state_name == "北京"
 
 
+def test_city_display_migration_preserves_raw_names_and_repoints_history() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    observed_at = datetime(2026, 8, 19, 0, tzinfo=UTC)
+    with engine.begin() as connection:
+        command.upgrade(migration_config(connection), "0015")
+
+    with Session(engine) as session, session.begin():
+        company = Company(key="example", name="示例公司", created_at=observed_at)
+        session.add(company)
+        session.flush()
+        source = Source(
+            company_id=company.id,
+            key="example_cn",
+            display_name="示例招聘官网",
+            source_type="company_career_portal",
+            scope_name="示例公司",
+            company_name="示例公司",
+            base_url="https://example.invalid",
+            timezone="Asia/Shanghai",
+            enabled=True,
+        )
+        session.add(source)
+        session.flush()
+        session.add(
+            SourceChannel(
+                source_id=source.id,
+                channel="experienced",
+                status="active",
+                coverage_note=None,
+                created_at=observed_at,
+                updated_at=observed_at,
+            )
+        )
+        canonical_beijing = CanonicalLocation(
+            key="legacy-beijing",
+            level="city",
+            name="北京",
+            city_name="北京",
+            created_at=observed_at,
+        )
+        canonical_beijing_city = CanonicalLocation(
+            key="legacy-beijing-city",
+            level="city",
+            name="北京市",
+            city_name="北京市",
+            created_at=observed_at,
+        )
+        session.add_all([canonical_beijing, canonical_beijing_city])
+        session.flush()
+        locations = [
+            Location(source_id=source.id, code="BJ", name="北京"),
+            Location(source_id=source.id, code="BJ-CN", name="北京市"),
+        ]
+        session.add_all(locations)
+        session.flush()
+        session.add_all(
+            [
+                SourceLocationMapping(
+                    location_id=locations[0].id,
+                    canonical_location_id=canonical_beijing.id,
+                    mapping_method="exact_source_fields",
+                    mapping_version="auto-city-name-v2-legacy-beijing",
+                    is_current=True,
+                    confidence=1,
+                    created_at=observed_at,
+                ),
+                SourceLocationMapping(
+                    location_id=locations[1].id,
+                    canonical_location_id=canonical_beijing_city.id,
+                    mapping_method="exact_source_fields",
+                    mapping_version="auto-city-name-v2-legacy-beijing-city",
+                    is_current=True,
+                    confidence=1,
+                    created_at=observed_at,
+                ),
+            ]
+        )
+        runs = [
+            CrawlRun(
+                id="legacy-run-bj",
+                source_id=source.id,
+                channel="experienced",
+                snapshot_date=observed_at.date(),
+                status="success",
+                started_at=observed_at,
+                finished_at=observed_at,
+                discovered_count=1,
+                page_count=1,
+                partition_counts={"all": 1},
+                complete=True,
+                absence_authoritative=True,
+                issues=[],
+            ),
+            CrawlRun(
+                id="legacy-run-bj-city",
+                source_id=source.id,
+                channel="experienced",
+                snapshot_date=observed_at.date(),
+                status="success",
+                started_at=observed_at,
+                finished_at=observed_at,
+                discovered_count=1,
+                page_count=1,
+                partition_counts={"all": 1},
+                complete=True,
+                absence_authoritative=True,
+                issues=[],
+            ),
+        ]
+        session.add_all(runs)
+        session.flush()
+        jobs = [
+            Job(
+                source_id=source.id,
+                external_id="job-bj",
+                source_url="https://example.invalid/jobs/job-bj",
+                channel="experienced",
+                employment_type_id="full_time",
+                employment_type_name="正式",
+                title="北京研发工程师",
+                status="active",
+                missing_streak=0,
+                content_hash="b" * 64,
+                first_seen_at=observed_at,
+                first_canonical_seen_on=observed_at.date(),
+                last_seen_at=observed_at,
+                last_changed_at=observed_at,
+            ),
+            Job(
+                source_id=source.id,
+                external_id="job-bj-city",
+                source_url="https://example.invalid/jobs/job-bj-city",
+                channel="experienced",
+                employment_type_id="full_time",
+                employment_type_name="正式",
+                title="北京市研发工程师",
+                status="active",
+                missing_streak=0,
+                content_hash="c" * 64,
+                first_seen_at=observed_at,
+                first_canonical_seen_on=observed_at.date(),
+                last_seen_at=observed_at,
+                last_changed_at=observed_at,
+            ),
+        ]
+        session.add_all(jobs)
+        session.flush()
+        versions = [
+            JobVersion(
+                job_id=jobs[0].id,
+                crawl_run_id=runs[0].id,
+                content_hash=jobs[0].content_hash,
+                fact_contract_version="v3",
+                payload={"locations": [{"name": "北京"}]},
+                observed_at=observed_at,
+            ),
+            JobVersion(
+                job_id=jobs[1].id,
+                crawl_run_id=runs[1].id,
+                content_hash=jobs[1].content_hash,
+                fact_contract_version="v3",
+                payload={"locations": [{"name": "北京市"}]},
+                observed_at=observed_at,
+            ),
+        ]
+        session.add_all(versions)
+        session.flush()
+        session.add_all(
+            [
+                JobObservation(
+                    job_id=jobs[0].id,
+                    job_version_id=versions[0].id,
+                    crawl_run_id=runs[0].id,
+                    observed_at=observed_at,
+                ),
+                JobObservation(
+                    job_id=jobs[1].id,
+                    job_version_id=versions[1].id,
+                    crawl_run_id=runs[1].id,
+                    observed_at=observed_at,
+                ),
+                JobVersionLocation(
+                    job_version_id=versions[0].id,
+                    location_id=locations[0].id,
+                    canonical_location_id=canonical_beijing.id,
+                    mapping_method="exact_source_fields",
+                    mapping_version="auto-city-name-v2-legacy-beijing",
+                    mapping_confidence=1,
+                ),
+                JobVersionLocation(
+                    job_version_id=versions[1].id,
+                    location_id=locations[1].id,
+                    canonical_location_id=canonical_beijing_city.id,
+                    mapping_method="exact_source_fields",
+                    mapping_version="auto-city-name-v2-legacy-beijing-city",
+                    mapping_confidence=1,
+                ),
+                DailySnapshot(
+                    source_id=source.id,
+                    channel="experienced",
+                    snapshot_date=observed_at.date(),
+                    crawl_run_id=runs[0].id,
+                    is_baseline=True,
+                    created_at=observed_at,
+                ),
+            ]
+        )
+
+    with engine.begin() as connection:
+        command.upgrade(migration_config(connection), "head")
+
+    with Session(engine) as session:
+        assert session.scalars(select(Location.name).order_by(Location.id)).all() == [
+            "北京",
+            "北京市",
+        ]
+        history = session.scalars(
+            select(JobVersionLocation).order_by(JobVersionLocation.job_version_id)
+        ).all()
+        assert len({item.canonical_location_id for item in history}) == 1
+        assert {item.mapping_method for item in history} == {"normalized_city_name"}
+        assert len({item.mapping_version for item in history}) == 1
+        assert next(iter({item.mapping_version for item in history})).startswith(
+            "auto-city-name-v3-city-name-"
+        )
+
+
 def test_topic_experiment_is_retired_without_deleting_audit_rows() -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:")
     with engine.begin() as connection:
@@ -400,7 +627,7 @@ def test_legacy_database_is_stamped_migrated_and_backfilled_without_data_loss() 
         assert session.query(JobVersionSourceCategory).count() == 1
         assert session.query(SourceCategory).count() == 2
         assert session.query(SourceChannel).count() == 2
-        assert session.query(SourceLocationMapping).count() == 2
+        assert session.query(SourceLocationMapping).count() == 3
         assert session.query(SourceLocationMapping).filter(
             SourceLocationMapping.is_current.is_(True)
         ).count() == 1

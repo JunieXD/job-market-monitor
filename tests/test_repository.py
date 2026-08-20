@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from job_market.models import (
     Base,
+    CanonicalLocation,
     CrawlRun,
     CrawlRunFieldStat,
     DailySnapshot,
@@ -16,6 +17,7 @@ from job_market.models import (
     JobVersionBusinessUnit,
     JobVersionLocation,
     JobVersionSourceCategory,
+    Location,
     RawSnapshot,
     SourceBusinessUnit,
     SourceCategory,
@@ -465,6 +467,40 @@ def test_changed_source_location_is_remapped_without_overwriting_history() -> No
         assert len(mappings) == 2
         assert [item.is_current for item in mappings] == [False, True]
         assert mappings[0].canonical_location_id != mappings[1].canonical_location_id
+
+
+def test_city_name_variants_share_one_canonical_location_without_overwriting_sources() -> None:
+    repository, _ = make_repository()
+    source_id = repository.ensure_source(channels={"campus": None})
+    run_id = repository.start_run(source_id, Channel.CAMPUS.value)
+    repository.ingest(
+        run_id,
+        result(
+            [
+                make_job(
+                    locations=[
+                        LocationRecord(code="BJ", name="北京"),
+                        LocationRecord(code="BJ-CN", name="北京市"),
+                    ]
+                )
+            ]
+        ),
+    )
+
+    with Session(repository.engine) as session:
+        source_locations = session.scalars(
+            select(Location).order_by(Location.id)
+        ).all()
+        mappings = session.scalars(
+            select(SourceLocationMapping)
+            .where(SourceLocationMapping.is_current.is_(True))
+            .order_by(SourceLocationMapping.location_id)
+        ).all()
+        assert [item.name for item in source_locations] == ["北京", "北京市"]
+        assert len({item.canonical_location_id for item in mappings}) == 1
+        canonical = session.get(CanonicalLocation, mappings[0].canonical_location_id)
+        assert canonical is not None
+        assert canonical.name == "北京"
 
 
 def test_source_business_unit_renames_keep_versioned_history() -> None:

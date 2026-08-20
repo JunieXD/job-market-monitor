@@ -8,7 +8,7 @@ from math import ceil
 from typing import Any
 from urllib.parse import urlencode
 
-from playwright.async_api import Page, Response, Route
+from playwright.async_api import Page, Response
 
 from job_market.config import Settings
 from job_market.connectors.browser_json import (
@@ -64,7 +64,6 @@ class LenovoConnector:
         if channel is not Channel.CAMPUS:
             raise ValueError("Lenovo connector supports only campus jobs")
 
-        await self.page.route("**/*", _skip_nonessential_assets)
         dictionaries: dict[str, dict[str, str]] | None = None
         jobs_by_id: dict[str, JobRecord] = {}
         partition_counts: dict[str, int] = {}
@@ -381,12 +380,6 @@ class LenovoConnector:
                 )
             )
 
-
-async def _skip_nonessential_assets(route: Route) -> None:
-    if route.request.resource_type in {"image", "media", "font"}:
-        await route.abort()
-    else:
-        await route.continue_()
 
 
 def _optional(value: Any) -> str | None:

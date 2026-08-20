@@ -7,7 +7,7 @@ from math import ceil
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from playwright.async_api import Page, Response, Route
+from playwright.async_api import Page, Response
 
 from job_market.config import Settings
 from job_market.connectors.browser_json import (
@@ -66,7 +66,6 @@ class TongchengConnector:
         if channel is not Channel.EXPERIENCED:
             raise ValueError("Tongcheng connector supports only experienced jobs")
 
-        await self.page.route("**/*", _skip_nonessential_assets)
         jobs_by_id, root_total, complete = await self._collect_root(max_pages)
         partition_counts = {
             "all": root_total,
@@ -541,12 +540,6 @@ class TongchengConnector:
             complete=complete,
         )
 
-
-async def _skip_nonessential_assets(route: Route) -> None:
-    if route.request.resource_type in {"image", "media", "font"}:
-        await route.abort()
-    else:
-        await route.continue_()
 
 
 def _optional(value: Any) -> str | None:

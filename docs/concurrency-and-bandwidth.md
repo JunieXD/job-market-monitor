@@ -24,6 +24,11 @@ Playwright 的 `context.route` 会关闭 HTTP 缓存，因此项目使用 Chromi
 图片、字体、音视频扩展名，并阻止 Service Worker。岗位接口、脚本、文档和必要的 XHR/fetch 保留。
 连接器内部如有额外的资源策略，仍由统一网络指标记录失败和接收字节。
 
+连接器不再使用 Playwright `page.route` 做同样的图片/字体拦截，因为该 API 会关闭 Chromium HTTP
+缓存，导致重复打开详情页时反复下载脚本。统一 CDP 策略保留浏览器缓存，同时阻止非必要资源；
+定时调度器会先检查采集镜像，并使用 `docker compose run --pull never`，避免把镜像拉取、构建和
+Chromium 安装流量混入每日采集。
+
 CDP 指标包括请求/响应数、接收字节、资源类型分布和失败数；使用 `page.request` 或其他独立请求
 上下文的连接器不能完全由 CDP 覆盖，最终实验应同时记录 Docker `NET I/O`。原始岗位 JSON 仍按
 gzip 快照保存，原始证据不因网络优化删除。

@@ -69,6 +69,9 @@ docker compose run --rm collector crawl \
 `api` 和 `web` 使用 `restart: unless-stopped`，Docker 服务或虚拟机重启后会自动恢复。可通过
 `docker compose ps` 检查三个常驻服务；采集器只在定时任务执行时创建临时容器。
 
+定时脚本会在启动前检查采集镜像，并使用 Docker Compose 的 `--pull never` 运行采集容器。镜像和
+Chromium 依赖必须在发布阶段手工构建并验证；每日采集不会自动触发镜像拉取、构建或重复下载依赖。
+
 ## systemd 定时任务
 
 批量脚本会读取当天尚未生成标准快照的来源，并为每个来源独立创建临时采集容器。单个来源失败会
@@ -100,6 +103,9 @@ tail -n 100 /var/log/job-market-monitor/crawl.jsonl
 ```
 
 采集日志为一行一个 JSON 事件，记录批次、来源、渠道、重试、每分钟进度、结果、耗时和流量汇总。
+
+定时任务启动前会检查采集镜像是否已存在，并使用 `docker compose run --pull never`。镜像和
+Chromium 依赖必须在发布阶段构建，定时任务不会触发镜像拉取、构建或依赖下载。
 完整 traceback 与最多 100 条结构化问题明细保存在 `crawl_runs`，日志不写岗位正文和响应 payload。
 专用日志单文件上限 20MB、保留 14 天并压缩；Docker `json-file` 日志另有每容器 30MB 上限。
 

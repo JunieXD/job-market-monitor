@@ -16,3 +16,9 @@ def test_city_identity_is_stable_when_optional_geography_is_missing() -> None:
 
 def test_city_name_normalization_handles_width_case_and_whitespace() -> None:
     assert normalize_city_name("  ＬＯＮＤＯＮ  ") == "london"
+
+
+def test_city_name_normalization_removes_chinese_city_suffix() -> None:
+    assert normalize_city_name("北京市") == "北京"
+    assert normalize_city_name("上海") == "上海"
+    assert normalize_city_name("New York City") == "new york city"

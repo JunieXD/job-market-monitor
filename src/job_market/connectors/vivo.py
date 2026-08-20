@@ -7,7 +7,7 @@ from math import ceil
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from playwright.async_api import Page, Response, Route
+from playwright.async_api import Page, Response
 
 from job_market.config import Settings
 from job_market.connectors.browser_json import (
@@ -64,7 +64,6 @@ class VivoConnector:
         if channel is not Channel.EXPERIENCED:
             raise ValueError("vivo connector supports only the experienced channel")
 
-        await self.page.route("**/*", _skip_nonessential_assets)
         root_payload = await self._open_root()
         root = self._position_page(root_payload, expected_page=1)
         total_count = root["total"]
@@ -437,12 +436,6 @@ class VivoConnector:
             raise RuntimeError("vivo category catalog has not been loaded")
         return self._category_catalog
 
-
-async def _skip_nonessential_assets(route: Route) -> None:
-    if route.request.resource_type in {"image", "media", "font"}:
-        await route.abort()
-    else:
-        await route.continue_()
 
 
 def _optional(value: Any) -> str | None:

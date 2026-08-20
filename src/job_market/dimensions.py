@@ -14,6 +14,7 @@ from job_market.models import (
     SourceCategory,
     SourceLocationMapping,
 )
+from job_market.normalization import normalize_city_name
 from job_market.schemas import CategoryMappingRecord, LocationMappingRecord
 
 
@@ -92,12 +93,13 @@ class DimensionRepository:
         state_name: str | None = None,
         city_name: str | None = None,
     ) -> int:
+        display_name = normalize_city_name(name) if level == "city" else name
         with Session(self.engine) as session, session.begin():
             existing = session.scalar(
                 select(CanonicalLocation).where(CanonicalLocation.key == key)
             )
             if existing is not None:
-                if existing.name != name or existing.level != level:
+                if existing.name != display_name or existing.level != level:
                     raise ValueError(
                         "Canonical locations are immutable; use a new canonical key"
                     )
@@ -105,12 +107,16 @@ class DimensionRepository:
             location = CanonicalLocation(
                 key=key,
                 level=level,
-                name=name,
+                name=display_name,
                 country_code=country_code,
                 country_name=country_name,
                 state_code=state_code,
                 state_name=state_name,
-                city_name=city_name or (name if level == "city" else None),
+                city_name=(
+                    normalize_city_name(city_name)
+                    if city_name is not None and level == "city"
+                    else city_name or (display_name if level == "city" else None)
+                ),
                 created_at=self._now(),
             )
             session.add(location)

@@ -85,7 +85,10 @@ fi
 compose=("$DOCKER_BIN" compose -f "$COMPOSE_FILE")
 
 run_container() {
-  "${compose[@]}" run --rm --no-deps \
+  # A scheduled crawl must never pull an image or build Chromium. Compose
+  # versions in supported Ubuntu releases do not expose a portable no-build
+  # flag, so the preflight image check plus --pull never enforce that policy.
+  "${compose[@]}" run --pull never --rm --no-deps \
     -e "CRAWL_BATCH_ID=$BATCH_ID" \
     collector "$@"
 }
@@ -105,7 +108,7 @@ run_source() {
     --signal=TERM \
     --kill-after=30s \
     "${SOURCE_TIMEOUT_SECONDS}s" \
-    "${compose[@]}" run --rm --no-deps --name "$container_name" \
+    "${compose[@]}" run --pull never --rm --no-deps --name "$container_name" \
     -e "CRAWL_BATCH_ID=$BATCH_ID" \
     collector \
     crawl --source "$source" --channel all --due-only
@@ -161,6 +164,10 @@ fi
 
 if ! "${compose[@]}" config --quiet; then
   log_event "batch_preflight_failed" "compose_config_invalid"
+  exit 1
+fi
+if ! "$DOCKER_BIN" image inspect "${COLLECTOR_IMAGE:-job-market-monitor-collector:latest}" >/dev/null 2>&1; then
+  log_event "batch_preflight_failed" "collector_image_missing"
   exit 1
 fi
 preflight_output=$(run_container check-schema 2>&1)

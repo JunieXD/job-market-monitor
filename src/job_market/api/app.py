@@ -20,6 +20,7 @@ from job_market.analytics_contracts import (
 from job_market.config import Settings
 from job_market.db import make_engine
 from job_market.health import SourceHealthChecker
+from job_market.normalization import normalize_city_name
 
 
 def create_app(
@@ -116,7 +117,7 @@ def create_app(
         rows = _query_rows(
             request.app.state.engine,
             """
-            SELECT l.code, l.name, s.key AS source_key, s.company_name,
+            SELECT l.code, l.name AS source_name, s.key AS source_key, s.company_name,
                    l.country_name, l.state_name
             FROM locations AS l
             JOIN sources AS s ON s.id = l.source_id
@@ -124,6 +125,8 @@ def create_app(
             ORDER BY l.name, s.key
             """,
         )
+        for row in rows:
+            row["name"] = normalize_city_name(str(row["source_name"]))
         return {"data": rows}
 
     @app.get("/api/v1/overview", response_model=AnalyticsEnvelope, tags=["分析"])
@@ -465,7 +468,7 @@ def create_app(
         detail["locations"] = _query_rows(
             engine,
             """
-            SELECT l.code, l.name, l.country_name, l.state_name,
+            SELECT l.code, l.name AS source_name, l.country_name, l.state_name,
                    l.district_name, l.address
             FROM jobs AS j
             JOIN sources AS s ON s.id = j.source_id
@@ -476,6 +479,8 @@ def create_app(
             """,
             params,
         )
+        for row in detail["locations"]:
+            row["name"] = normalize_city_name(str(row["source_name"]))
         detail["categories"] = _query_rows(
             engine,
             """
