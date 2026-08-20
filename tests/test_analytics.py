@@ -80,8 +80,8 @@ def test_daily_views_use_baselines_versioned_dimensions_and_fractional_cities() 
     clock = Clock()
     repository = Repository(engine, clock=clock)
     source_id = repository.ensure_source()
-    city_a = LocationRecord(code="A", name="甲城")
-    city_b = LocationRecord(code="B", name="乙城")
+    city_a = LocationRecord(code="A", name="北京")
+    city_b = LocationRecord(code="B", name="上海")
     backend_job = make_job(
         "job-backend",
         title="后端研发工程师",
@@ -134,13 +134,13 @@ def test_daily_views_use_baselines_versioned_dimensions_and_fractional_cities() 
         channel=Channel.CAMPUS.value,
     )
     by_city = {row["city_name"]: row for row in cities}
-    assert by_city["甲城"]["posting_count"] == 2
-    assert by_city["甲城"]["total_posting_count"] == 2
-    assert float(by_city["甲城"]["posting_share"]) == pytest.approx(1.0)
-    assert float(by_city["乙城"]["posting_share"]) == pytest.approx(0.5)
-    assert float(by_city["甲城"]["fractional_posting_count"]) == pytest.approx(1.5)
-    assert float(by_city["甲城"]["fractional_share"]) == pytest.approx(0.75)
-    assert float(by_city["乙城"]["fractional_share"]) == pytest.approx(0.25)
+    assert by_city["北京"]["posting_count"] == 2
+    assert by_city["北京"]["total_posting_count"] == 2
+    assert float(by_city["北京"]["posting_share"]) == pytest.approx(1.0)
+    assert float(by_city["上海"]["posting_share"]) == pytest.approx(0.5)
+    assert float(by_city["北京"]["fractional_posting_count"]) == pytest.approx(1.5)
+    assert float(by_city["北京"]["fractional_share"]) == pytest.approx(0.75)
+    assert float(by_city["上海"]["fractional_share"]) == pytest.approx(0.25)
 
     assert DataQualityChecker(engine).run()["ok"] is True
 
@@ -289,6 +289,64 @@ def test_city_distribution_splits_multi_city_location_labels() -> None:
     assert {row["city_name"] for row in rows} == {"厦门", "福州", "漳州"}
     assert all(row["posting_count"] == 1 for row in rows)
     assert all(float(row["posting_share"]) == pytest.approx(1.0) for row in rows)
+
+
+def test_city_distribution_merges_hong_kong_aliases_and_omits_foreign_cities() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    clock = Clock()
+    repository = Repository(engine, clock=clock)
+    source_id = repository.ensure_source()
+    run_id = repository.start_run(source_id, Channel.CAMPUS.value)
+    repository.ingest(
+        run_id,
+        collection(
+            [
+                make_job(
+                    "beijing-job",
+                    title="北京岗位",
+                    category_id="operations",
+                    category_name="运营",
+                    locations=[LocationRecord(code="BEIJING", name="北京")],
+                ),
+                make_job(
+                    "hong-kong-job",
+                    title="香港岗位",
+                    category_id="operations",
+                    category_name="运营",
+                    locations=[LocationRecord(code="HONG_KONG", name="中国香港")],
+                ),
+                make_job(
+                    "singapore-job",
+                    title="新加坡岗位",
+                    category_id="operations",
+                    category_name="运营",
+                    locations=[LocationRecord(code="SINGAPORE", name="新加坡")],
+                ),
+            ]
+        ),
+    )
+
+    # Simulate the historical canonical name already present in the Ubuntu data.
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            "UPDATE canonical_locations SET name = '中国香港' WHERE name = '香港'"
+        )
+
+    rows = AnalyticsRepository(engine).city_distribution(
+        company_key="bytedance",
+        snapshot_date=clock().date(),
+        channel=Channel.CAMPUS.value,
+    )
+
+    assert {row["city_name"] for row in rows} == {"北京", "香港"}
+    assert all(row["total_posting_count"] == 3 for row in rows)
+    assert all(float(row["posting_share"]) == pytest.approx(1 / 3) for row in rows)
+    with engine.connect() as connection:
+        source_names = set(
+            connection.exec_driver_sql("SELECT name FROM locations").scalars()
+        )
+    assert source_names == {"北京", "中国香港", "新加坡"}
 
 
 def test_multi_category_and_unclassified_jobs_remain_distinct() -> None:

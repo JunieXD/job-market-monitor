@@ -2,6 +2,7 @@ import hashlib
 import re
 import unicodedata
 
+from job_market.china_cities import CHINA_CITY_ALIASES
 from job_market.schemas import LocationRecord
 
 _LOCATION_PART_RE = re.compile(r"[·•・‧∙/／|｜,，、;；]+|[-－—]+")
@@ -60,6 +61,7 @@ _NON_CITY_REGIONS = frozenset(
         "东北",
     }
 )
+_CITY_SUFFIX_EXCEPTIONS = frozenset({"芒市"})
 
 
 def _is_region_part(value: str) -> bool:
@@ -122,12 +124,16 @@ def _normalize_single_city_name(value: str) -> str | None:
         candidate = district_match.group("city")
     if candidate.endswith("特别行政区") and len(candidate) > len("特别行政区"):
         candidate = candidate[: -len("特别行政区")]
-    if len(candidate) > 1 and candidate.endswith("市"):
+    if (
+        len(candidate) > 1
+        and candidate.endswith("市")
+        and candidate not in _CITY_SUFFIX_EXCEPTIONS
+    ):
         candidate = candidate[:-1]
     candidate = candidate.rstrip(" ·•・‧∙/／|｜,，、;；:-－—")
     if not candidate or candidate in _NON_CITY_REGIONS or _is_region_part(candidate):
         return None
-    return candidate
+    return CHINA_CITY_ALIASES.get(candidate, candidate)
 
 
 def normalize_city_names(name: str) -> list[str]:

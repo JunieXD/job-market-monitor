@@ -253,7 +253,7 @@ tbody tr:hover { background: #f8fafb; }
 .city-insights span { color: var(--muted); font-size: 12px; }
 .city-insights strong { overflow: hidden; color: var(--ink); font-size: 18px; text-overflow: ellipsis; white-space: nowrap; }
 .city-panel { display: flex; height: 100%; flex-direction: column; }
-.city-panel > .chart { flex: 1 0 auto; }
+.city-panel > .chart { flex: 0 0 auto; }
 .city-panel > .pagination { margin-top: auto; }
 .city-table th:first-child, .city-table td:first-child { width: 34%; text-align: center; }
 

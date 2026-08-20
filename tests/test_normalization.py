@@ -1,3 +1,4 @@
+from job_market.china_cities import standard_china_city_name
 from job_market.normalization import (
     canonical_location_key,
     is_city_level_name,
@@ -66,3 +67,15 @@ def test_city_name_normalization_splits_city_lists_and_keeps_city_hierarchy() ->
         "南通",
         "淮安",
     ]
+
+
+def test_china_city_catalog_normalizes_aliases_and_excludes_foreign_places() -> None:
+    assert normalize_city_names("中国香港") == ["香港"]
+    assert normalize_city_names("香港岛") == ["香港"]
+    assert normalize_city_names("香港(中国)") == ["香港"]
+    assert normalize_city_names("芒市") == ["芒市"]
+    assert standard_china_city_name("香港") == "香港"
+    assert standard_china_city_name("深圳") == "深圳"
+    assert standard_china_city_name("新加坡") is None
+    assert standard_china_city_name("广东") is None
+    assert standard_china_city_name("嘉善县") is None
