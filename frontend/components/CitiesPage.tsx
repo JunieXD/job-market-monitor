@@ -25,7 +25,7 @@ export function CitiesPage() {
   const load = useCallback(async () => {
     const params = {
       channel: channel === "all" ? undefined : channel,
-      company_keys: companyKeys ?? undefined,
+      company_keys: companyKeys === null ? undefined : companyKeys.length ? companyKeys : ["__none__"],
     };
     const cachedCompanies = getCachedJson<{ data: CompanyMeta[] }>("/api/v1/meta/companies");
     const cachedResult = getCachedJson<Envelope<CityRow>>("/api/v1/distributions/cities", params);
@@ -59,7 +59,7 @@ export function CitiesPage() {
       {error && <ErrorNotice message={error} />}
       {coverage && <CoverageNotice completed={coverage.standard_snapshot_count} total={coverage.configured_source_channel_count} />}
       <div className="city-toolbar">
-        <MultiSelectFilter label="公司" options={companyOptions} values={companyKeys} onValuesChange={(values) => { setCompanyKeys(values); setPage(1); }} ariaLabel="筛选公司" minimumSelected={1} />
+        <MultiSelectFilter label="公司" options={companyOptions} values={companyKeys} onValuesChange={(values) => { setCompanyKeys(values); setPage(1); }} ariaLabel="筛选公司" />
         <SelectField value={channel} options={channelOptions} onValueChange={(value) => { setChannel(value); setPage(1); }} ariaLabel="选择招聘类型" />
       </div>
       <div className="city-insights" aria-label="城市分布摘要">

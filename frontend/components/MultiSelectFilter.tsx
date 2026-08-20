@@ -15,7 +15,6 @@ export function MultiSelectFilter({
   ariaLabel,
   searchPlaceholder,
   allSelectedLabel,
-  minimumSelected = 0,
   className = "",
 }: {
   label: string;
@@ -25,7 +24,6 @@ export function MultiSelectFilter({
   ariaLabel: string;
   searchPlaceholder?: string;
   allSelectedLabel?: string;
-  minimumSelected?: number;
   className?: string;
 }) {
   const [open, setOpen] = useState(false);
@@ -40,6 +38,10 @@ export function MultiSelectFilter({
   const filtered = useMemo(
     () => options.filter((option) => matchesSubsequence(option.label, query)),
     [options, query],
+  );
+  const selectedResultCount = useMemo(
+    () => filtered.filter((option) => effectiveValues.has(option.value)).length,
+    [effectiveValues, filtered],
   );
 
   useEffect(() => {
@@ -69,7 +71,6 @@ export function MultiSelectFilter({
   function commit(next: Set<string>, manual = true) {
     if (manual) autoRetainResultsRef.current = false;
     const selected = allValues.filter((value) => next.has(value));
-    if (selected.length < minimumSelected) return;
     onValuesChange(selected.length === allValues.length ? null : selected);
   }
 
@@ -111,6 +112,14 @@ export function MultiSelectFilter({
     commit(next);
   }
 
+  function selectAll() {
+    commit(new Set(allValues));
+  }
+
+  function deselectAll() {
+    commit(new Set());
+  }
+
   return (
     <div className={`multi-select ${className}`} ref={rootRef}>
       <button
@@ -146,10 +155,11 @@ export function MultiSelectFilter({
             )}
           </div>
           <div className="filter-actions">
-            <button type="button" onClick={retainResults} disabled={!filtered.length}>仅保留结果</button>
-            <button type="button" onClick={selectResults} disabled={!filtered.length}>全选结果</button>
-            <button type="button" onClick={deselectResults} disabled={!filtered.length || effectiveValues.size - filtered.filter((option) => effectiveValues.has(option.value)).length < minimumSelected}>取消结果</button>
-            <button type="button" onClick={() => { autoRetainResultsRef.current = false; setQuery(""); onValuesChange(null); }}>重置</button>
+            {query && <button type="button" onClick={retainResults} disabled={!filtered.length || (effectiveValues.size === filtered.length && selectedResultCount === filtered.length)}>仅选搜索结果</button>}
+            {query && <button type="button" onClick={selectResults} disabled={!filtered.length || selectedResultCount === filtered.length}>选中搜索结果</button>}
+            {query && <button type="button" onClick={deselectResults} disabled={!selectedResultCount}>取消搜索结果</button>}
+            <button type="button" onClick={selectAll} disabled={!allValues.length || effectiveValues.size === allValues.length}>全部选中</button>
+            <button type="button" onClick={deselectAll} disabled={!effectiveValues.size}>全部取消</button>
           </div>
           <div className="filter-options" role="listbox" aria-multiselectable="true" aria-label={`${label}选项`}>
             {filtered.length ? filtered.map((option) => {

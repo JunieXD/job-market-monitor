@@ -116,6 +116,14 @@ def test_api_exposes_health_overview_and_read_only_job_queries() -> None:
             "requirements",
         ]
 
+        no_search_fields = client.get(
+            "/api/v1/jobs",
+            params={"query": "Python", "query_fields_empty": "true"},
+        )
+        assert no_search_fields.status_code == 200
+        assert no_search_fields.json()["meta"]["pagination"]["total"] == 0
+        assert no_search_fields.json()["meta"]["filters"]["query_fields"] == []
+
         filtered_jobs = client.get(
             "/api/v1/jobs",
             params=[

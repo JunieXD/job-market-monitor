@@ -338,6 +338,7 @@ def create_app(
             list[Literal["title", "description", "requirements"]] | None,
             Query(),
         ] = None,
+        query_fields_empty: bool = False,
         limit: int = Query(default=50, ge=1, le=100),
         offset: int = Query(default=0, ge=0, le=100000),
     ) -> AnalyticsEnvelope:
@@ -362,6 +363,7 @@ def create_app(
         if selected_channels:
             placeholders = _bind_list(params, "channel", selected_channels)
             filters.append(f"j.channel IN ({placeholders})")
+        selected_query_fields = query_fields
         if query is not None and query.strip():
             columns_by_field = {
                 "title": ["j.title"],
@@ -369,20 +371,27 @@ def create_app(
                 "requirements": ["j.requirements"],
                 "all": ["j.title", "j.description", "j.requirements"],
             }
-            selected_query_fields = list(dict.fromkeys(query_fields or [query_field]))
+            selected_query_fields = (
+                []
+                if query_fields_empty
+                else list(dict.fromkeys(query_fields or [query_field]))
+            )
             search_columns = [
                 column
                 for field in selected_query_fields
                 for column in columns_by_field[field]
             ]
-            filters.append(
-                "("
-                + " OR ".join(
-                    f"LOWER(COALESCE({column}, '')) LIKE :query ESCAPE '\\'"
-                    for column in search_columns
+            if search_columns:
+                filters.append(
+                    "("
+                    + " OR ".join(
+                        f"LOWER(COALESCE({column}, '')) LIKE :query ESCAPE '\\'"
+                        for column in search_columns
+                    )
+                    + ")"
                 )
-                + ")"
-            )
+            else:
+                filters.append("FALSE")
             params["query"] = _fuzzy_like_pattern(query)
         where = " AND ".join(filters)
         engine = request.app.state.engine
@@ -428,7 +437,7 @@ def create_app(
                 "status": status,
                 "query": query,
                 "query_field": query_field,
-                "query_fields": query_fields,
+                "query_fields": selected_query_fields,
             },
             metric_definition="current_job_list",
             pagination={"limit": limit, "offset": offset, "total": int(total or 0)},

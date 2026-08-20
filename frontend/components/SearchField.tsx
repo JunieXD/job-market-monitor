@@ -38,7 +38,6 @@ export function SearchField({
         onValuesChange={onScopesChange}
         ariaLabel="选择搜索字段"
         allSelectedLabel={`${scopes.length} 个字段`}
-        minimumSelected={1}
         className="search-scope-field"
       />
     </div>

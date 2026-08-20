@@ -38,7 +38,8 @@ export function JobsPage() {
       channels: channels === null ? undefined : channels.length ? channels : ["__none__"],
       company_keys: companyKeys === null ? undefined : companyKeys.length ? companyKeys : ["__none__"],
       query: query || undefined,
-      query_fields: query ? queryFields ?? undefined : undefined,
+      query_fields: query && queryFields?.length ? queryFields : undefined,
+      query_fields_empty: query && queryFields !== null && !queryFields.length ? "true" : undefined,
       limit: pageSize,
       offset: (page - 1) * pageSize,
     };
@@ -77,7 +78,7 @@ export function JobsPage() {
         <button type="submit" className="primary-button"><Search size={15} /><span>搜索</span></button>
       </form>
       <Panel title="岗位列表" note={`${formatNumber(total)} 个岗位${coverage?.snapshot_date ? ` · 更新至 ${coverage.snapshot_date}` : ""}`}>
-        {loading && !result ? <LoadingBlock /> : result?.data.length ? <JobTable rows={result.data} onOpen={setSelectedJob} /> : <EmptyState title="没有符合条件的岗位" detail="请调整筛选条件或搜索词。" />}
+        {loading && !result ? <LoadingBlock /> : result?.data.length ? <JobTable rows={result.data} onOpen={setSelectedJob} /> : <EmptyState title="没有符合条件的岗位" detail={query && queryFields?.length === 0 ? "请至少选择一个搜索字段。" : "请调整筛选条件或搜索词。"} />}
         <Pagination total={total} page={currentPage} pageSize={pageSize} onPageChange={setPage} onPageSizeChange={(size) => { setPageSize(size); setPage(1); }} itemLabel="个岗位" />
       </Panel>
       {selectedJob && <JobDetailDialog key={`${selectedJob.source_key}-${selectedJob.external_id}`} job={selectedJob} onClose={() => setSelectedJob(null)} />}
