@@ -1,11 +1,14 @@
+import asyncio
 import json
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from zoneinfo import ZoneInfo
 
 import pytest
 
-from job_market.connectors.pdd import PORTALS, PDDConnector
+from job_market.connectors.pdd import DETAIL_ENDPOINT, PORTALS, PDDConnector
 from job_market.schemas import Channel
 
 FIXTURE = Path(__file__).parent / "fixtures" / "pdd_job.json"
@@ -76,3 +79,36 @@ def test_pdd_list_page_rejects_duplicate_count_shape() -> None:
 
     with pytest.raises(RuntimeError, match="row mismatch"):
         PDDConnector._list_page(payload, expected_page=1)
+
+
+@pytest.mark.asyncio
+async def test_pdd_detail_uses_same_origin_api_without_page_navigation() -> None:
+    raw = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    response = SimpleNamespace(
+        status=200,
+        json=AsyncMock(return_value={"success": True, "result": raw["detail"]}),
+    )
+    request = SimpleNamespace(post=AsyncMock(return_value=response))
+    connector = object.__new__(PDDConnector)
+    connector.settings = SimpleNamespace(pdd_request_delay_seconds=0.5)
+    connector._last_request_started_at = 0.0
+    connector._request_start_lock = asyncio.Lock()
+
+    result = await connector._open_detail(
+        SimpleNamespace(request=request),
+        asyncio.Queue(),
+        PORTALS[Channel.CAMPUS],
+        raw["list"]["id"],
+    )
+
+    assert result["result"] == raw["detail"]
+    request.post.assert_awaited_once_with(
+        DETAIL_ENDPOINT,
+        data={"id": raw["list"]["id"], "t": None},
+        headers={
+            "Accept": "application/json, text/plain, */*",
+            "X-Requested-With": "XMLHttpRequest",
+            "Referer": PORTALS[Channel.CAMPUS].detail_url(raw["list"]["id"]),
+        },
+        timeout=60_000,
+    )

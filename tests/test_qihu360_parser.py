@@ -1,11 +1,18 @@
+import asyncio
 import json
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from zoneinfo import ZoneInfo
 
 import pytest
 
-from job_market.connectors.qihu360 import LIST_LIMIT, Qihu360Connector
+from job_market.connectors.qihu360 import (
+    LIST_LIMIT,
+    POSITION_DETAIL_API_URL,
+    Qihu360Connector,
+)
 from job_market.schemas import Channel
 
 FIXTURE = Path(__file__).parent / "fixtures" / "qihu360_job.json"
@@ -69,3 +76,37 @@ def test_qihu360_list_validates_declared_count_and_cap() -> None:
         Qihu360Connector._list_rows(
             {"code": 0, "count": LIST_LIMIT, "data": [{}] * LIST_LIMIT}
         )
+
+
+@pytest.mark.asyncio
+async def test_qihu360_detail_uses_same_origin_api_without_page_navigation() -> None:
+    raw = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    response = SimpleNamespace(
+        status=200,
+        json=AsyncMock(return_value={"code": 0, "data": raw["detail"]}),
+    )
+    request = SimpleNamespace(get=AsyncMock(return_value=response))
+    connector = object.__new__(Qihu360Connector)
+    connector.settings = SimpleNamespace(qihu360_request_delay_seconds=0.5)
+    connector._last_request_started_at = 0.0
+    connector._request_start_lock = asyncio.Lock()
+
+    result = await connector._open_detail(
+        SimpleNamespace(request=request),
+        asyncio.Queue(),
+        raw["list"]["id"],
+    )
+
+    assert result["data"] == raw["detail"]
+    request.get.assert_awaited_once_with(
+        POSITION_DETAIL_API_URL.format(external_id=raw["list"]["id"]),
+        headers={
+            "Accept": "application/json, text/plain, */*",
+            "X-Requested-With": "XMLHttpRequest",
+            "Referer": (
+                "https://hr.360.cn/hr/detail/"
+                f"{raw['list']['id']}"
+            ),
+        },
+        timeout=60_000,
+    )

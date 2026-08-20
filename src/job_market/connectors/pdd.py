@@ -33,6 +33,7 @@ RESPONSE_TIMEOUT_SECONDS = 30
 UI_PAGE_SIZE = 10
 DETAIL_CONCURRENCY = 2
 DETAIL_OPEN_ATTEMPTS = 3
+DETAIL_ENDPOINT = "https://careers.pddglobalhr.com/api/careers/api/recruit/position/detail"
 
 
 @dataclass(frozen=True)
@@ -259,13 +260,32 @@ class PDDConnector:
         for attempt in range(1, DETAIL_OPEN_ATTEMPTS + 1):
             try:
                 await self._rate_limit()
-                drain_json_responses(queue)
-                await page.goto(
-                    portal.detail_url(external_id),
-                    wait_until="commit",
+                # The detail route only bootstraps this same-origin JSON POST.
+                # Keep the browser context for cookies while avoiding one HTML
+                # and JavaScript bundle download per job.
+                response = await page.request.post(
+                    DETAIL_ENDPOINT,
+                    data={"id": external_id, "t": None},
+                    headers={
+                        "Accept": "application/json, text/plain, */*",
+                        "X-Requested-With": "XMLHttpRequest",
+                        "Referer": portal.detail_url(external_id),
+                    },
                     timeout=60_000,
                 )
-                payload = await self._next_result(queue, f"detail:{external_id}")
+                if response.status != 200:
+                    raise BrowserResponseUnavailableError(
+                        f"PDD detail API returned HTTP {response.status}"
+                    )
+                payload = await response.json()
+                if (
+                    not isinstance(payload, dict)
+                    or payload.get("success") is not True
+                    or not isinstance(payload.get("result"), dict)
+                ):
+                    raise BrowserResponseUnavailableError(
+                        f"PDD detail API returned an invalid response for {external_id}"
+                    )
                 actual = _optional(payload["result"].get("id"))
                 if actual != external_id:
                     raise RuntimeError(

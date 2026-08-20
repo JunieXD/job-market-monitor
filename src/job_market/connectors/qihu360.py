@@ -35,6 +35,9 @@ DETAIL_CONCURRENCY = 2
 DETAIL_OPEN_ATTEMPTS = 3
 POSITION_LIST_URL = "https://hr.360.cn/hr/list"
 POSITION_DETAIL_URL = "https://hr.360.cn/hr/detail/{external_id}"
+POSITION_DETAIL_API_URL = (
+    "https://hr.360.cn/v2/index/getjobone?id={external_id}"
+)
 LIST_ENDPOINT = "/v2/index/getlistsearch"
 DETAIL_ENDPOINT = "/v2/index/getjobone"
 REQUIREMENT_HEADINGS = {
@@ -178,13 +181,30 @@ class Qihu360Connector:
         for attempt in range(1, DETAIL_OPEN_ATTEMPTS + 1):
             try:
                 await self._rate_limit()
-                drain_json_responses(queue)
-                await page.goto(
-                    POSITION_DETAIL_URL.format(external_id=external_id),
-                    wait_until="commit",
+                # The detail page only bootstraps this same-origin JSON GET.
+                # Requesting it directly avoids downloading the detail HTML and
+                # its application bundle once for every job. The browser request
+                # context keeps the page's cookies and anti-CSRF state.
+                response = await page.request.get(
+                    POSITION_DETAIL_API_URL.format(external_id=external_id),
+                    headers={
+                        "Accept": "application/json, text/plain, */*",
+                        "X-Requested-With": "XMLHttpRequest",
+                        "Referer": POSITION_DETAIL_URL.format(
+                            external_id=external_id
+                        ),
+                    },
                     timeout=60_000,
                 )
-                payload = await self._next_success(queue, f"detail:{external_id}")
+                if response.status != 200:
+                    raise BrowserResponseUnavailableError(
+                        f"360 detail API returned HTTP {response.status}"
+                    )
+                payload = await response.json()
+                if not isinstance(payload, dict) or payload.get("code") != 0:
+                    raise BrowserResponseUnavailableError(
+                        f"360 detail API returned an invalid response for {external_id}"
+                    )
                 detail = payload.get("data")
                 if not isinstance(detail, dict):
                     raise RuntimeError(

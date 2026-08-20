@@ -6,6 +6,7 @@ PROJECT_DIR=${PROJECT_DIR:-/opt/job-market-monitor}
 COMPOSE_FILE=${COMPOSE_FILE:-${PROJECT_DIR}/compose.yaml}
 DOCKER_BIN=${DOCKER_BIN:-/usr/bin/docker}
 TIMEOUT_BIN=${TIMEOUT_BIN:-/usr/bin/timeout}
+COLLECTOR_IMAGE=${COLLECTOR_IMAGE:-job-market-monitor-collector:latest}
 BENCHMARK_MAX_PAGES=${BENCHMARK_MAX_PAGES:-20}
 BENCHMARK_TIMEOUT_SECONDS=${BENCHMARK_TIMEOUT_SECONDS:-3600}
 BENCHMARK_PARALLEL=${BENCHMARK_PARALLEL:-1}
@@ -43,6 +44,10 @@ cd "$PROJECT_DIR" || exit 1
 run_dir="${BENCHMARK_OUTPUT_DIR}/${BENCHMARK_RUN_ID}-p${BENCHMARK_PARALLEL}"
 mkdir -p "$run_dir"
 compose=("$DOCKER_BIN" compose -f "$COMPOSE_FILE")
+if ! "$DOCKER_BIN" image inspect "$COLLECTOR_IMAGE" >/dev/null 2>&1; then
+  log "collector image is missing: ${COLLECTOR_IMAGE}"
+  exit 1
+fi
 active_names=()
 active_pids=()
 active_sources=()
@@ -76,7 +81,7 @@ run_case() {
     --signal=TERM \
     --kill-after=30s \
     "${BENCHMARK_TIMEOUT_SECONDS}s" \
-    "${compose[@]}" run --rm --no-deps --name "$container_name" collector \
+    "${compose[@]}" run --pull never --rm --no-deps --name "$container_name" collector \
     crawl --source "$source" --channel "$channel" --dry-run \
     --max-pages "$BENCHMARK_MAX_PAGES" >"$output_file" 2>&1
   local exit_code=$?
