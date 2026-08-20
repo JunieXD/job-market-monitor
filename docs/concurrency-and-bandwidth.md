@@ -140,6 +140,33 @@ swap out 明显增加。p4 已出现约 72 MiB swap in 且速度倒退。最终�
 不能单独作为岗位失败依据。写入条件仍由官网总数、分页行数、唯一岗位集合和连接器完整性校验决定；
 任何一个不满足都不会形成权威每日快照。
 
+## 流量口径与镜像隔离验证
+
+Dockerfile 中的 `playwright install --with-deps chromium` 只在镜像构建时执行，会下载 Playwright
+浏览器包、headless shell、ffmpeg 以及系统依赖。它不是每日采集步骤。定时脚本会先检查
+`job-market-monitor-collector:latest` 已存在，再使用 `docker compose run --pull never`；镜像缺失时直接
+记录预检失败，不自动拉取、构建或安装 Chromium。
+
+2026-08-20 在 Ubuntu 虚拟机执行了一次 360 社招单页 dry-run，命令使用上述 `--pull never` 且不写数据库：
+
+| 指标 | 结果 |
+| --- | ---: |
+| 岗位/页面 | 25 / 1，完整 |
+| 采集器 CDP `received_bytes` | 2,512,934 bytes |
+| 虚拟机 `enp0s5` RX 增量 | 2,674,609 bytes |
+| 虚拟机 `enp0s5` TX 增量 | 353,464 bytes |
+| 虚拟机网卡收发合计 | 3,028,073 bytes（约 2.89 MiB） |
+
+运行前后镜像摘要均为 `sha256:84e51cf...`、镜像大小为 595,857,902 bytes；Docker image/builder 事件为空，
+镜像内 `/ms-playwright` 已存在（约 984MB，包含 Chromium、headless shell 和 ffmpeg）。因此这次网卡增量
+是招聘网站请求及协议开销，不是 Chromium 二进制下载或镜像构建。
+
+以上是三个不同统计层，不能直接相加：采集器字节是浏览器响应体的近似值，虚拟机网卡包含 TCP/TLS、DNS、
+请求上传和 Docker 转发开销，宿主机 FlowWatch 中的 Parallels Desktop 则可能聚合整台虚拟机的全部外网流量。
+如果同时查看这三者，应以虚拟机网卡或 Docker `NET I/O` 作为本项目网络账单，不能把 Parallels 数字再加一次。
+宿主机上其他路径（例如 AutoEmailSender 自带的 `ms-playwright`）出现的 `chrome-headless-shell` 流量，也不能
+归因给本项目的 Docker Chromium。
+
 实验脚本现在额外生成：
 
 - `system-stats.tsv`：可用内存、swap 页、OOM 和负载时间序列。
