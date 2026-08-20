@@ -11,7 +11,14 @@ PostgreSQL 的服务器。当前项目尚未自动连接或修改任何生产服
 git clone <你的 GitHub 仓库地址> /opt/job-market-monitor
 cd /opt/job-market-monitor
 cp .env.example .env
-docker compose build collector
+# 首次或依赖升级时才执行一次，明确允许下载 Playwright/Chromium。
+docker build --pull=true \
+  --build-arg ALLOW_NETWORK_BUILD=1 \
+  -f Dockerfile \
+  -t job-market-monitor-collector:bootstrap .
+docker tag job-market-monitor-collector:bootstrap job-market-monitor-collector:vm-base
+# 日常代码更新从本地基础镜像构建，不联网、不重新下载依赖。
+./deploy/build-collector-offline.sh
 docker compose up -d postgres
 docker compose run --rm collector init-db
 docker compose up -d api web
@@ -69,8 +76,9 @@ docker compose run --rm collector crawl \
 `api` 和 `web` 使用 `restart: unless-stopped`，Docker 服务或虚拟机重启后会自动恢复。可通过
 `docker compose ps` 检查三个常驻服务；采集器只在定时任务执行时创建临时容器。
 
-定时脚本会在启动前检查采集镜像，并使用 Docker Compose 的 `--pull never` 运行采集容器。镜像和
-Chromium 依赖必须在发布阶段手工构建并验证；每日采集不会自动触发镜像拉取、构建或重复下载依赖。
+定时脚本会在启动前检查采集镜像，并使用 Docker Compose 的 `--pull never` 运行采集容器。运行 Compose
+中的 `collector` 没有 `build:` 配置，镜像缺失会直接失败；镜像和 Chromium 依赖必须在发布阶段手工构建
+并验证，每日采集不会自动触发镜像拉取、构建或重复下载依赖。
 
 ## systemd 定时任务
 
@@ -104,8 +112,9 @@ tail -n 100 /var/log/job-market-monitor/crawl.jsonl
 
 采集日志为一行一个 JSON 事件，记录批次、来源、渠道、重试、每分钟进度、结果、耗时和流量汇总。
 
-定时任务启动前会检查采集镜像是否已存在，并使用 `docker compose run --pull never`。镜像和
-Chromium 依赖必须在发布阶段构建，定时任务不会触发镜像拉取、构建或依赖下载。
+定时任务启动前会检查采集镜像是否已存在，并使用 `docker compose run --pull never --no-deps`。镜像和
+Chromium 依赖必须在发布阶段构建；定时任务不会触发构建或依赖下载。代码层发布请使用
+`deploy/build-collector-offline.sh`，不要直接执行 `docker compose build collector`。
 完整 traceback 与最多 100 条结构化问题明细保存在 `crawl_runs`，日志不写岗位正文和响应 payload。
 专用日志单文件上限 20MB、保留 14 天并压缩；Docker `json-file` 日志另有每容器 30MB 上限。
 

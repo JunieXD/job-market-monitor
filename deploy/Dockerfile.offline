@@ -4,11 +4,15 @@ FROM ${BASE_IMAGE}
 USER root
 WORKDIR /app
 
+RUN python -c "import playwright, setuptools"
+
 COPY pyproject.toml README.md LICENSE ./
 COPY src ./src
 
-# The base image already contains locked runtime dependencies and Chromium.
-RUN pip install --no-cache-dir --no-deps .
+# The base image already contains locked runtime dependencies, Chromium and
+# the build backend. No build isolation is allowed here because it could try
+# to download setuptools even when --no-deps is present.
+RUN pip install --no-cache-dir --no-deps --no-build-isolation .
 
 USER collector
 

@@ -34,7 +34,7 @@ jobs:
           cache: pip
       - run: pip install -e '.[dev]'
       - run: ruff check .
-      - run: bash -n deploy/run-scheduled-crawls.sh
+      - run: bash -n deploy/build-collector-offline.sh deploy/run-scheduled-crawls.sh deploy/run-concurrency-benchmark.sh
       - run: pytest -q
       - uses: actions/setup-node@v5
         with:

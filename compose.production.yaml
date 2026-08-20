@@ -9,8 +9,8 @@ x-logging: &default-logging
 services:
   collector:
     image: ${COLLECTOR_IMAGE:-job-market-monitor-collector:latest}
-    build:
-      context: .
+    # Runtime is image-only. Build or upgrade the collector explicitly with
+    # deploy/build-collector-offline.sh; the scheduler must never build it.
     init: true
     shm_size: "1gb"
     logging: *default-logging
@@ -60,6 +60,7 @@ services:
   api:
     build:
       context: .
+      dockerfile: deploy/Dockerfile.api
     init: true
     restart: unless-stopped
     logging: *default-logging

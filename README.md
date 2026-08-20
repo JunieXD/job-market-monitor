@@ -110,10 +110,21 @@ uv sync --extra dev
 uv run playwright install --with-deps chromium
 ```
 
-也可以使用 Docker 构建采集镜像：
+首次准备采集器基础镜像（或确实升级 Playwright/Chromium）时，才使用一次显式联网构建：
 
 ```bash
-docker compose build collector
+docker build --pull=true \
+  --build-arg ALLOW_NETWORK_BUILD=1 \
+  -f Dockerfile \
+  -t job-market-monitor-collector:bootstrap .
+docker tag job-market-monitor-collector:bootstrap job-market-monitor-collector:vm-base
+```
+
+之后的代码更新使用离线脚本。它要求本地基础镜像存在，并且强制 `--pull=false --network=none`，不会
+重新下载 Python 依赖、Playwright 或 Chromium：
+
+```bash
+./deploy/build-collector-offline.sh
 ```
 
 ### 配置本地环境

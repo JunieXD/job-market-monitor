@@ -107,6 +107,13 @@ rtk proxy prlctl exec "Ubuntu 26.04" tail -n 100 /var/log/job-market-monitor/cra
 `docker compose run --pull never`，缺少已验证镜像时应预检失败，不得在每日采集中自动拉取、构建或安装
 Chromium。
 
+构建也有明确边界：两个运行 Compose 文件的 `collector` 服务只有 `image` 没有 `build`，所以运行和定时
+采集不会隐式进入 Docker 构建流程。代码层更新使用 `deploy/build-collector-offline.sh`，它从本地
+`job-market-monitor-collector:vm-base` 复制已安装依赖，强制 `--pull=false --network=none`，并使用
+`pip --no-deps --no-build-isolation`。只有 Playwright/Chromium 版本升级才手工构建根目录 `Dockerfile`，
+且必须显式传入 `--build-arg ALLOW_NETWORK_BUILD=1`；API 使用独立的 `deploy/Dockerfile.api`，不会安装
+Chromium。后续 Agent 不得用普通 `docker compose build collector` 替代上述流程。
+
 已验证的 Ubuntu 并发基线：并发 2 比顺序执行快约 37% 至 40%；并发 3 额外收益很小并增加 swap；并发
 4 出现明显 swap 且更慢。因此不要仅按 CPU 核数提高并发，任何调整都必须重复完整性和内存实验。
 

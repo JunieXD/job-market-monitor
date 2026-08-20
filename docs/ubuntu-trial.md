@@ -30,13 +30,12 @@ docker compose ps
 
 ```bash
 docker tag job-market-monitor-collector:latest job-market-monitor-collector:vm-base
-docker build -f deploy/Dockerfile.offline \
-  --build-arg BASE_IMAGE=job-market-monitor-collector:vm-base \
-  -t job-market-monitor-collector:latest .
-docker tag job-market-monitor-collector:latest job-market-monitor-api:latest
+./deploy/build-collector-offline.sh
 ```
 
 基础镜像只在依赖或 Chromium 版本变化时通过标准 `Dockerfile` 重建；不能用离线构建跳过依赖变更。
+标准构建必须显式使用 `--build-arg ALLOW_NETWORK_BUILD=1`；离线脚本会强制 `--network=none`，因此不会
+因为构建上下文或 pip 构建隔离而重新访问网络。
 
 ## 每日调度
 
