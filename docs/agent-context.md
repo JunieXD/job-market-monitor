@@ -1,8 +1,8 @@
-# Job Market Monitor 项目协作说明
+# Job Market Monitor 运行与工程上下文
 
-这是一份给后续 Codex/Agent 会话使用的项目上下文。它记录稳定的工程事实、运行边界和验收要求，
-不是产品需求文档。开始工作前先阅读本文件；修改 `frontend/` 时还必须阅读
-[`frontend/AGENTS.md`](frontend/AGENTS.md)。
+这是一份给后续 Codex/Agent 会话查阅的详细上下文。它记录运行环境、部署方式、采集实验、数据模型和
+验收要求；根目录的 [`AGENTS.md`](../AGENTS.md) 只保留通用约束和入口说明。修改 `frontend/` 时还必须
+阅读 [`frontend/AGENTS.md`](../frontend/AGENTS.md)。
 
 ## 项目目标
 
@@ -178,4 +178,3 @@ Docker volume、实验输出或大文件。
 5. 部署时只更新采集器代码/镜像，除非用户明确要求，不要重启 API、Web 或 PostgreSQL。
 6. 在最终回复中说明实际改动、实验数据、验证结果、Ubuntu 当前状态和未完成风险；不要把测试数据说成
    真实全量数据，也不要暗示已经部署生产。
-
