@@ -52,14 +52,20 @@ def test_fresh_migrations_match_models_and_create_analysis_views() -> None:
             text("SELECT version_num FROM alembic_version")
         ).scalar_one()
         drift = compare_metadata(MigrationContext.configure(connection), Base.metadata)
-    assert revision == "0019"
+    assert revision == "0020"
     assert drift == []
     columns = {item["name"]: item for item in inspect(engine).get_columns("jobs")}
     run_columns = {
         item["name"]: item for item in inspect(engine).get_columns("crawl_runs")
     }
+    snapshot_columns = {
+        item["name"]: item
+        for item in inspect(engine).get_columns("daily_snapshots")
+    }
     assert run_columns["absence_authoritative"]["nullable"] is False
     assert run_columns["issues"]["nullable"] is False
+    assert snapshot_columns["active_posting_count"]["nullable"] is False
+    assert snapshot_columns["new_posting_count"]["nullable"] is False
     assert columns["external_code"]["nullable"] is True
     assert columns["published_at"]["nullable"] is True
     assert columns["is_hot"]["nullable"] is True
@@ -83,6 +89,29 @@ def test_fresh_migrations_match_models_and_create_analysis_views() -> None:
         "daily_market_category_stats",
         "daily_market_city_stats",
     }
+    assert check_schema(engine)["ok"] is True
+
+
+def test_read_query_migration_can_downgrade_and_restore_views() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+
+    with engine.begin() as connection:
+        command.downgrade(migration_config(connection), "0019")
+        snapshot_columns = {
+            item["name"]
+            for item in inspect(connection).get_columns("daily_snapshots")
+        }
+        assert "active_posting_count" not in snapshot_columns
+        assert set(inspect(connection).get_view_names()) == {
+            "daily_category_stats",
+            "daily_city_stats",
+            "daily_company_stats",
+            "daily_market_category_stats",
+            "daily_market_city_stats",
+        }
+        command.upgrade(migration_config(connection), "head")
+
     assert check_schema(engine)["ok"] is True
 
 
@@ -426,15 +455,22 @@ def test_city_display_migration_preserves_raw_names_and_repoints_history() -> No
                     mapping_version="auto-city-name-v2-legacy-beijing-city",
                     mapping_confidence=1,
                 ),
-                DailySnapshot(
-                    source_id=source.id,
-                    channel="experienced",
-                    snapshot_date=observed_at.date(),
-                    crawl_run_id=runs[0].id,
-                    is_baseline=True,
-                    created_at=observed_at,
-                ),
             ]
+        )
+        legacy_snapshots = sa.Table(
+            "daily_snapshots",
+            sa.MetaData(),
+            autoload_with=session.connection(),
+        )
+        session.execute(
+            legacy_snapshots.insert().values(
+                source_id=source.id,
+                channel="experienced",
+                snapshot_date=observed_at.date(),
+                crawl_run_id=runs[0].id,
+                is_baseline=True,
+                created_at=observed_at,
+            )
         )
 
     with engine.begin() as connection:

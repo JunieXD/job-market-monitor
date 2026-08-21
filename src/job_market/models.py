@@ -167,6 +167,22 @@ class DailySnapshot(Base):
     snapshot_date: Mapped[date] = mapped_column(Date, nullable=False)
     crawl_run_id: Mapped[str] = mapped_column(ForeignKey("crawl_runs.id"), nullable=False)
     is_baseline: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    active_posting_count: Mapped[int] = mapped_column(
+        Integer, default=0, nullable=False
+    )
+    new_posting_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    changed_posting_count: Mapped[int] = mapped_column(
+        Integer, default=0, nullable=False
+    )
+    first_missing_posting_count: Mapped[int] = mapped_column(
+        Integer, default=0, nullable=False
+    )
+    closed_posting_count: Mapped[int] = mapped_column(
+        Integer, default=0, nullable=False
+    )
+    reopened_posting_count: Mapped[int] = mapped_column(
+        Integer, default=0, nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
@@ -175,6 +191,7 @@ class Job(Base):
     __table_args__ = (
         UniqueConstraint("source_id", "external_id", name="uq_jobs_source_external"),
         Index("ix_jobs_source_channel_status", "source_id", "channel", "status"),
+        Index("ix_jobs_status_last_seen_id", "status", "last_seen_at", "id"),
         CheckConstraint(
             "experience_min_years IS NULL OR experience_max_years IS NULL "
             "OR experience_min_years <= experience_max_years",
@@ -408,6 +425,7 @@ class JobLifecycleEvent(Base):
             "job_id", "crawl_run_id", "event_type", name="uq_job_lifecycle_event_run"
         ),
         Index("ix_job_lifecycle_events_type_observed", "event_type", "observed_at"),
+        Index("ix_job_lifecycle_events_run_type", "crawl_run_id", "event_type"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)

@@ -1,7 +1,7 @@
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import Session
 
 from job_market.models import (
@@ -296,7 +296,29 @@ def test_same_day_rerun_replaces_daily_snapshot_without_advancing_lifecycle() ->
         assert snapshot is not None
         assert job.missing_streak == 0
         assert snapshot.crawl_run_id == second_run
+        assert snapshot.active_posting_count == 0
+        assert snapshot.new_posting_count == 0
+        assert snapshot.first_missing_posting_count == 0
         assert session.query(JobLifecycleEvent).count() == 1
+
+
+def test_data_quality_detects_daily_snapshot_rollup_drift() -> None:
+    repository, _ = make_repository()
+    source_id = repository.ensure_source()
+    run_id = repository.start_run(source_id, Channel.CAMPUS.value)
+    repository.ingest(run_id, result([make_job()]))
+
+    with repository.engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE daily_snapshots "
+                "SET active_posting_count = active_posting_count + 1"
+            )
+        )
+
+    quality = DataQualityChecker(repository.engine).run()
+    assert quality["ok"] is False
+    assert quality["violations"] == {"daily_snapshot_rollup_mismatch": 1}
 
 
 def test_due_sources_are_removed_after_all_channels_have_daily_snapshots() -> None:

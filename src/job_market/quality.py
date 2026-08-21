@@ -1,6 +1,6 @@
 from collections.abc import Callable
 
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, func, or_, select, text
 from sqlalchemy import case as sa_case
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
@@ -62,6 +62,9 @@ class DataQualityChecker:
                 "observation_job_version_mismatch": self._observation_version_mismatch,
                 "observation_run_scope_mismatch": self._observation_run_scope_mismatch,
                 "invalid_daily_snapshot": self._invalid_daily_snapshot,
+                "daily_snapshot_rollup_mismatch": (
+                    self._daily_snapshot_rollup_mismatch
+                ),
                 "successful_run_count_mismatch": self._successful_run_count_mismatch,
                 "invalid_baseline_snapshot": self._invalid_baseline_snapshot,
                 "current_location_set_mismatch": self._current_location_set_mismatch,
@@ -137,6 +140,59 @@ class DataQualityChecker:
             )
         )
         return session.scalar(statement) or 0
+
+    @staticmethod
+    def _daily_snapshot_rollup_mismatch(session: Session) -> int:
+        statement = text(
+            """
+            WITH observation_counts AS (
+                SELECT ds.id AS snapshot_id,
+                       COUNT(jo.id) AS active_count,
+                       SUM(
+                           CASE
+                               WHEN NOT ds.is_baseline
+                                AND j.first_canonical_seen_on = ds.snapshot_date
+                               THEN 1 ELSE 0
+                           END
+                       ) AS new_count
+                FROM daily_snapshots AS ds
+                LEFT JOIN job_observations AS jo
+                  ON jo.crawl_run_id = ds.crawl_run_id
+                LEFT JOIN jobs AS j ON j.id = jo.job_id
+                GROUP BY ds.id, ds.snapshot_date, ds.is_baseline
+            ), event_counts AS (
+                SELECT crawl_run_id,
+                       SUM(CASE WHEN event_type = 'changed' THEN 1 ELSE 0 END)
+                           AS changed_count,
+                       SUM(CASE WHEN event_type = 'missing' THEN 1 ELSE 0 END)
+                           AS missing_count,
+                       SUM(CASE WHEN event_type = 'closed' THEN 1 ELSE 0 END)
+                           AS closed_count,
+                       SUM(CASE WHEN event_type = 'reopened' THEN 1 ELSE 0 END)
+                           AS reopened_count
+                FROM job_lifecycle_events
+                WHERE crawl_run_id IS NOT NULL
+                GROUP BY crawl_run_id
+            )
+            SELECT COUNT(*)
+            FROM daily_snapshots AS ds
+            JOIN observation_counts AS oc ON oc.snapshot_id = ds.id
+            LEFT JOIN event_counts AS ec ON ec.crawl_run_id = ds.crawl_run_id
+            WHERE ds.active_posting_count != oc.active_count
+               OR ds.new_posting_count != oc.new_count
+               OR ds.changed_posting_count != COALESCE(ec.changed_count, 0)
+               OR ds.first_missing_posting_count != COALESCE(ec.missing_count, 0)
+               OR ds.closed_posting_count != COALESCE(ec.closed_count, 0)
+               OR ds.reopened_posting_count != COALESCE(ec.reopened_count, 0)
+               OR ds.active_posting_count < 0
+               OR ds.new_posting_count < 0
+               OR ds.changed_posting_count < 0
+               OR ds.first_missing_posting_count < 0
+               OR ds.closed_posting_count < 0
+               OR ds.reopened_posting_count < 0
+            """
+        )
+        return int(session.execute(statement).scalar_one())
 
     @staticmethod
     def _successful_run_count_mismatch(session: Session) -> int:

@@ -232,6 +232,7 @@ class Repository:
         changed_count = 0
         enriched_count = 0
         reopened_count = 0
+        canonical_new_count = 0
 
         with Session(self.engine) as session, session.begin():
             self._lock_ingest_transaction(session)
@@ -441,6 +442,12 @@ class Repository:
                         job.missing_streak = 0
                         job.missing_since_at = None
 
+                if (
+                    daily_snapshot
+                    and job.first_canonical_seen_on == run.snapshot_date
+                ):
+                    canonical_new_count += 1
+
                 self._copy_job_fields(job, record)
                 job.last_seen_at = now
                 self._sync_current_locations(session, job.id, locations)
@@ -457,9 +464,10 @@ class Repository:
                     )
                 )
 
+            first_missing_count = 0
             closed_count = 0
             if advances_lifecycle:
-                closed_count = self._reconcile_missing(
+                first_missing_count, closed_count = self._reconcile_missing(
                     session,
                     source_id=source_id,
                     channel=result.channel.value,
@@ -478,6 +486,17 @@ class Repository:
             run.complete = result.complete
             run.absence_authoritative = result.absence_authoritative
             run.issues = [issue.model_dump(mode="json") for issue in result.issues]
+            if daily_snapshot:
+                self._set_daily_snapshot_metrics(
+                    session,
+                    run,
+                    active_posting_count=len(result.jobs),
+                    new_posting_count=canonical_new_count,
+                    changed_posting_count=changed_count,
+                    first_missing_posting_count=first_missing_count,
+                    closed_posting_count=closed_count,
+                    reopened_posting_count=reopened_count,
+                )
 
             return {
                 "discovered": len(result.jobs),
@@ -569,6 +588,34 @@ class Repository:
             )
         )
         return True
+
+    @staticmethod
+    def _set_daily_snapshot_metrics(
+        session: Session,
+        run: CrawlRun,
+        *,
+        active_posting_count: int,
+        new_posting_count: int,
+        changed_posting_count: int,
+        first_missing_posting_count: int,
+        closed_posting_count: int,
+        reopened_posting_count: int,
+    ) -> None:
+        snapshot = session.scalar(
+            select(DailySnapshot).where(
+                DailySnapshot.source_id == run.source_id,
+                DailySnapshot.channel == run.channel,
+                DailySnapshot.snapshot_date == run.snapshot_date,
+            )
+        )
+        if snapshot is None:
+            raise RuntimeError(f"Missing daily snapshot for canonical run {run.id}")
+        snapshot.active_posting_count = active_posting_count
+        snapshot.new_posting_count = 0 if snapshot.is_baseline else new_posting_count
+        snapshot.changed_posting_count = changed_posting_count
+        snapshot.first_missing_posting_count = first_missing_posting_count
+        snapshot.closed_posting_count = closed_posting_count
+        snapshot.reopened_posting_count = reopened_posting_count
 
     def due_source_keys(self) -> set[str]:
         """Return enabled sources missing at least one standard snapshot today."""
@@ -1143,7 +1190,7 @@ class Repository:
         seen_ids: set[str],
         run_id: str,
         observed_at: datetime,
-    ) -> int:
+    ) -> tuple[int, int]:
         jobs = session.scalars(
             select(Job).where(
                 Job.source_id == source_id,
@@ -1151,6 +1198,7 @@ class Repository:
                 Job.status == "active",
             )
         ).all()
+        first_missing = 0
         closed = 0
         for job in jobs:
             if job.external_id in seen_ids:
@@ -1162,6 +1210,7 @@ class Repository:
                 )
             )
             if job.missing_streak == 0:
+                first_missing += 1
                 job.missing_since_at = observed_at
                 self._add_lifecycle_event(
                     session,
@@ -1188,7 +1237,7 @@ class Repository:
                     details={"confirmation_streak": job.missing_streak},
                 )
                 closed += 1
-        return closed
+        return first_missing, closed
 
 
 def _isoformat(value: datetime | None) -> str | None:

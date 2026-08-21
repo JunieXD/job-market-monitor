@@ -206,10 +206,9 @@ class AnalyticsRepository:
                 f"""
                 WITH total_counts AS (
                     SELECT ds.snapshot_date, ds.channel,
-                           COUNT(DISTINCT jo.job_id) AS total_posting_count
+                           SUM(ds.active_posting_count) AS total_posting_count
                     FROM daily_snapshots AS ds
-                    LEFT JOIN job_observations AS jo
-                        ON jo.crawl_run_id = ds.crawl_run_id
+                    {where}
                     GROUP BY ds.snapshot_date, ds.channel
                 ), category_counts AS (
                     SELECT ds.snapshot_date, ds.channel,
@@ -275,10 +274,11 @@ class AnalyticsRepository:
                 f"""
                 WITH total_counts AS (
                     SELECT ds.snapshot_date, ds.source_id, ds.channel,
-                           COUNT(DISTINCT jo.job_id) AS total_posting_count
+                           SUM(ds.active_posting_count) AS total_posting_count
                     FROM daily_snapshots AS ds
-                    LEFT JOIN job_observations AS jo
-                        ON jo.crawl_run_id = ds.crawl_run_id
+                    JOIN sources AS s ON s.id = ds.source_id
+                    JOIN companies AS c ON c.id = s.company_id
+                    {where}
                     GROUP BY ds.snapshot_date, ds.source_id, ds.channel
                 ), category_counts AS (
                     SELECT ds.snapshot_date, ds.source_id,
@@ -378,12 +378,10 @@ class AnalyticsRepository:
             f"""
             WITH total_counts AS (
                 SELECT ds.snapshot_date,
-                       COUNT(DISTINCT jo.job_id) AS total_posting_count
+                       SUM(ds.active_posting_count) AS total_posting_count
                 FROM daily_snapshots AS ds
                 JOIN sources AS s ON s.id = ds.source_id
                 {company_joins}
-                JOIN job_observations AS jo
-                    ON jo.crawl_run_id = ds.crawl_run_id
                 {where}
                 GROUP BY ds.snapshot_date
             ), china_city_links AS (

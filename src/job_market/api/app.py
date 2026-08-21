@@ -346,6 +346,7 @@ def create_app(
         coverage = analytics.coverage(snapshot_date)
         selected_date = coverage["snapshot_date"]
         filters = ["ds.snapshot_date = :snapshot_date", "j.status = :status"]
+        snapshot_filters = ["ds.snapshot_date = :snapshot_date"]
         params: dict[str, Any] = {
             "snapshot_date": selected_date,
             "status": status,
@@ -356,15 +357,19 @@ def create_app(
         if selected_companies:
             placeholders = _bind_list(params, "company_key", selected_companies)
             filters.append(f"c.key IN ({placeholders})")
+            snapshot_filters.append(f"c.key IN ({placeholders})")
         if source_key is not None:
             filters.append("s.key = :source_key")
+            snapshot_filters.append("s.key = :source_key")
             params["source_key"] = source_key
         selected_channels = _unique_values([channel, *(channels or [])])
         if selected_channels:
             placeholders = _bind_list(params, "channel", selected_channels)
             filters.append(f"j.channel IN ({placeholders})")
+            snapshot_filters.append(f"ds.channel IN ({placeholders})")
         selected_query_fields = query_fields
-        if query is not None and query.strip():
+        has_query = query is not None and bool(query.strip())
+        if has_query:
             columns_by_field = {
                 "title": ["j.title"],
                 "description": ["j.description"],
@@ -394,6 +399,7 @@ def create_app(
                 filters.append("FALSE")
             params["query"] = _fuzzy_like_pattern(query)
         where = " AND ".join(filters)
+        snapshot_where = " AND ".join(snapshot_filters)
         engine = request.app.state.engine
         rows = _query_rows(
             engine,
@@ -413,19 +419,32 @@ def create_app(
             """,
             params,
         )
-        total = _query_scalar(
-            engine,
-            f"""
-            SELECT COUNT(*)
-            FROM daily_snapshots AS ds
-            JOIN job_observations AS jo ON jo.crawl_run_id = ds.crawl_run_id
-            JOIN jobs AS j ON j.id = jo.job_id
-            JOIN sources AS s ON s.id = j.source_id
-            JOIN companies AS c ON c.id = s.company_id
-            WHERE {where}
-            """,
-            params,
-        )
+        if snapshot_date is None and status == "active" and not has_query:
+            total = _query_scalar(
+                engine,
+                f"""
+                SELECT COALESCE(SUM(ds.active_posting_count), 0)
+                FROM daily_snapshots AS ds
+                JOIN sources AS s ON s.id = ds.source_id
+                JOIN companies AS c ON c.id = s.company_id
+                WHERE {snapshot_where}
+                """,
+                params,
+            )
+        else:
+            total = _query_scalar(
+                engine,
+                f"""
+                SELECT COUNT(*)
+                FROM daily_snapshots AS ds
+                JOIN job_observations AS jo ON jo.crawl_run_id = ds.crawl_run_id
+                JOIN jobs AS j ON j.id = jo.job_id
+                JOIN sources AS s ON s.id = j.source_id
+                JOIN companies AS c ON c.id = s.company_id
+                WHERE {where}
+                """,
+                params,
+            )
         return _envelope(
             rows,
             coverage=coverage,
