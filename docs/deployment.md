@@ -118,6 +118,23 @@ Chromium 依赖必须在发布阶段构建；定时任务不会触发构建或�
 完整 traceback 与最多 100 条结构化问题明细保存在 `crawl_runs`，日志不写岗位正文和响应 payload。
 专用日志单文件上限 20MB、保留 14 天并压缩；Docker `json-file` 日志另有每容器 30MB 上限。
 
+API 与 Web 的代码层发布也不应重新下载依赖。依赖版本未变化时，分别从已验证的本地运行镜像离线构建：
+
+```bash
+BASE_IMAGE=job-market-monitor-api:<已验证标签> \
+TARGET_IMAGE=job-market-monitor-api:<候选标签> \
+./deploy/build-api-offline.sh
+
+cd frontend && API_INTERNAL_URL=http://api:8000 npm run build && cd ..
+BASE_IMAGE=job-market-monitor-web:<已验证标签> \
+TARGET_IMAGE=job-market-monitor-web:<候选标签> \
+./deploy/build-web-offline.sh
+```
+
+两个脚本都强制 Docker `--pull=false --network=none`；Web 离线镜像只覆盖已经验证的 Next 构建产物，
+继续复用基础镜像中的 Linux 运行依赖，不把开发机的 `node_modules` 复制进镜像。只有 Python 或 Node
+依赖版本确实变化时，才把原始 `deploy/Dockerfile.api` 或 `frontend/Dockerfile` 作为一次性依赖发布流程。
+
 需要立即开始一次真实采集时，可以手工启动同一个 oneshot 服务；该操作仍受文件锁和当日完成状态保护：
 
 ```bash

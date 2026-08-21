@@ -1,0 +1,12 @@
+ARG BASE_IMAGE=job-market-monitor-web:latest
+FROM ${BASE_IMAGE}
+
+WORKDIR /app
+
+COPY public ./public
+COPY .next/standalone/server.js ./server.js
+COPY .next/standalone/package.json ./package.json
+COPY .next/standalone/.next ./.next
+COPY .next/static ./.next/static
+
+CMD ["node", "server.js"]

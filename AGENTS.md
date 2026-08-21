@@ -40,6 +40,9 @@
   镜像大小、依赖版本和网络流量。
 - 新会话开始涉及 Docker 前，先阅读本节、`docs/deployment.md` 和 `docs/agent-context.md`，检查本地
   镜像标签；不要把“构建成功”当作可以自动下载依赖的授权。
+- API 和 Web 的日常代码更新分别使用 `deploy/build-api-offline.sh` 与
+  `deploy/build-web-offline.sh`。两者都要求已验证的本地基础镜像并强制断网构建；Web 脚本还要求先在
+  当前工作区完成 `frontend` 生产构建。只有依赖版本确实变化时才允许使用原始在线 Dockerfile。
 
 ## 入口文档
 

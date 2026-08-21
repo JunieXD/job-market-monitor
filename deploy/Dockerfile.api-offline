@@ -1,0 +1,15 @@
+ARG BASE_IMAGE=job-market-monitor-api:latest
+FROM ${BASE_IMAGE}
+ARG RUNTIME_USER
+
+USER root
+WORKDIR /app
+
+COPY pyproject.toml README.md LICENSE ./
+COPY src ./src
+
+RUN pip install --no-cache-dir --no-deps --no-build-isolation .
+
+USER ${RUNTIME_USER}
+ENTRYPOINT ["uvicorn"]
+CMD ["job_market.api.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000", "--no-access-log"]
