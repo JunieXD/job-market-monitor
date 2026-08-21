@@ -173,9 +173,13 @@ export async function getJson<T>(
     .then(async (response) => {
       if (!response.ok) throw new Error(`API 请求失败（${response.status}）`);
       const payload = await response.json() as T;
-      responseCache.set(url, payload);
-      persistJson(url, payload);
-      return payload;
+      const previous = responseCache.get(url) as T | undefined;
+      const stablePayload = previous !== undefined && jsonEqual(previous, payload)
+        ? previous
+        : payload;
+      responseCache.set(url, stablePayload);
+      persistJson(url, stablePayload);
+      return stablePayload;
     })
     .finally(() => pendingRequests.delete(url));
   pendingRequests.set(url, request as Promise<unknown>);
@@ -290,6 +294,15 @@ function persistJson(url: string, payload: unknown): void {
     .slice(persistentCacheLimit);
   overflow.forEach(([key]) => { delete stored[key]; });
   writePersistentCache(stored);
+}
+
+function jsonEqual(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) return true;
+  try {
+    return JSON.stringify(left) === JSON.stringify(right);
+  } catch {
+    return false;
+  }
 }
 
 export function formatNumber(value: number | undefined): string {

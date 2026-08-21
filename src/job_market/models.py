@@ -2,6 +2,7 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import (
+    ARRAY,
     JSON,
     Boolean,
     CheckConstraint,
@@ -186,6 +187,22 @@ class DailySnapshot(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class DailySnapshotCityStat(Base):
+    __tablename__ = "daily_snapshot_city_stats"
+    __table_args__ = (
+        Index("ix_daily_snapshot_city_stats_city", "city_name", "daily_snapshot_id"),
+    )
+
+    daily_snapshot_id: Mapped[int] = mapped_column(
+        ForeignKey("daily_snapshots.id"), primary_key=True
+    )
+    city_name: Mapped[str] = mapped_column(String(100), primary_key=True)
+    posting_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    fractional_posting_count: Mapped[Decimal] = mapped_column(
+        Numeric(30, 16), nullable=False
+    )
+
+
 class Job(Base):
     __tablename__ = "jobs"
     __table_args__ = (
@@ -248,6 +265,38 @@ class Job(Base):
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     last_changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class JobSearchDocument(Base):
+    __tablename__ = "job_search_documents"
+    __table_args__ = (
+        Index(
+            "ix_job_search_documents_title_characters",
+            "title_characters",
+            postgresql_using="gin",
+        ),
+        Index(
+            "ix_job_search_documents_description_characters",
+            "description_characters",
+            postgresql_using="gin",
+        ),
+        Index(
+            "ix_job_search_documents_requirements_characters",
+            "requirements_characters",
+            postgresql_using="gin",
+        ),
+    )
+
+    job_id: Mapped[int] = mapped_column(ForeignKey("jobs.id"), primary_key=True)
+    title_characters: Mapped[list[int]] = mapped_column(
+        ARRAY(Integer).with_variant(JSON(), "sqlite"), nullable=False
+    )
+    description_characters: Mapped[list[int]] = mapped_column(
+        ARRAY(Integer).with_variant(JSON(), "sqlite"), nullable=False
+    )
+    requirements_characters: Mapped[list[int]] = mapped_column(
+        ARRAY(Integer).with_variant(JSON(), "sqlite"), nullable=False
+    )
 
 
 class SourceCategory(Base):

@@ -321,6 +321,48 @@ def test_data_quality_detects_daily_snapshot_rollup_drift() -> None:
     assert quality["violations"] == {"daily_snapshot_rollup_mismatch": 1}
 
 
+def test_data_quality_detects_daily_city_rollup_drift() -> None:
+    repository, _ = make_repository()
+    source_id = repository.ensure_source()
+    run_id = repository.start_run(source_id, Channel.CAMPUS.value)
+    repository.ingest(
+        run_id,
+        result(
+            [
+                make_job(
+                    locations=[LocationRecord(code="BJ", name="北京")],
+                )
+            ]
+        ),
+    )
+
+    with repository.engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE daily_snapshot_city_stats "
+                "SET posting_count = posting_count + 1"
+            )
+        )
+
+    quality = DataQualityChecker(repository.engine).run()
+    assert quality["ok"] is False
+    assert quality["violations"] == {"daily_snapshot_city_stat_mismatch": 1}
+
+
+def test_data_quality_detects_missing_search_document() -> None:
+    repository, _ = make_repository()
+    source_id = repository.ensure_source()
+    run_id = repository.start_run(source_id, Channel.CAMPUS.value)
+    repository.ingest(run_id, result([make_job()]))
+
+    with repository.engine.begin() as connection:
+        connection.execute(text("DELETE FROM job_search_documents"))
+
+    quality = DataQualityChecker(repository.engine).run()
+    assert quality["ok"] is False
+    assert quality["violations"] == {"job_search_document_mismatch": 1}
+
+
 def test_due_sources_are_removed_after_all_channels_have_daily_snapshots() -> None:
     repository, _ = make_repository()
     source_id = repository.ensure_source(channels={"campus": None})

@@ -8,6 +8,7 @@ from sqlalchemy import delete, func, select, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
+from job_market.china_cities import china_city_name_sql, china_city_values_sql
 from job_market.models import (
     CanonicalLocation,
     CategoryMapping,
@@ -15,10 +16,12 @@ from job_market.models import (
     CrawlRun,
     CrawlRunFieldStat,
     DailySnapshot,
+    DailySnapshotCityStat,
     Job,
     JobLifecycleEvent,
     JobLocation,
     JobObservation,
+    JobSearchDocument,
     JobVersion,
     JobVersionBusinessUnit,
     JobVersionLocation,
@@ -449,6 +452,7 @@ class Repository:
                     canonical_new_count += 1
 
                 self._copy_job_fields(job, record)
+                self._set_job_search_document(session, job)
                 job.last_seen_at = now
                 self._sync_current_locations(session, job.id, locations)
                 self._ensure_version_locations(session, version.id, locations)
@@ -497,6 +501,7 @@ class Repository:
                     closed_posting_count=closed_count,
                     reopened_posting_count=reopened_count,
                 )
+                self._set_daily_snapshot_city_stats(session, run)
 
             return {
                 "discovered": len(result.jobs),
@@ -616,6 +621,85 @@ class Repository:
         snapshot.first_missing_posting_count = first_missing_posting_count
         snapshot.closed_posting_count = closed_posting_count
         snapshot.reopened_posting_count = reopened_posting_count
+
+    @staticmethod
+    def _set_job_search_document(session: Session, job: Job) -> None:
+        document = session.get(JobSearchDocument, job.id)
+        if document is None:
+            document = JobSearchDocument(job_id=job.id)
+            session.add(document)
+        document.title_characters = Repository._search_character_codes(job.title)
+        document.description_characters = Repository._search_character_codes(
+            job.description
+        )
+        document.requirements_characters = Repository._search_character_codes(
+            job.requirements
+        )
+
+    @staticmethod
+    def _search_character_codes(value: str | None) -> list[int]:
+        return sorted(
+            {
+                ord(character)
+                for character in (value or "").lower()
+                if not character.isspace() or character in "\u00a0\u202f"
+            }
+        )
+
+    @staticmethod
+    def _set_daily_snapshot_city_stats(session: Session, run: CrawlRun) -> None:
+        session.flush()
+        snapshot_id = session.scalar(
+            select(DailySnapshot.id).where(
+                DailySnapshot.source_id == run.source_id,
+                DailySnapshot.channel == run.channel,
+                DailySnapshot.snapshot_date == run.snapshot_date,
+            )
+        )
+        if snapshot_id is None:
+            raise RuntimeError(f"Missing daily snapshot for canonical run {run.id}")
+        session.execute(
+            delete(DailySnapshotCityStat).where(
+                DailySnapshotCityStat.daily_snapshot_id == snapshot_id
+            )
+        )
+        standard_city_name = china_city_name_sql("cl.name")
+        session.execute(
+            text(
+                f"""
+                INSERT INTO daily_snapshot_city_stats (
+                    daily_snapshot_id,
+                    city_name,
+                    posting_count,
+                    fractional_posting_count
+                )
+                WITH china_city_links AS (
+                    SELECT DISTINCT jvlc.job_version_id,
+                           {standard_city_name} AS city_name
+                    FROM job_version_location_cities AS jvlc
+                    JOIN canonical_locations AS cl
+                      ON cl.id = jvlc.canonical_location_id
+                    WHERE {standard_city_name} IN ({china_city_values_sql()})
+                ), version_location_counts AS (
+                    SELECT job_version_id, COUNT(*) AS location_count
+                    FROM china_city_links
+                    GROUP BY job_version_id
+                )
+                SELECT :snapshot_id,
+                       city.city_name,
+                       COUNT(DISTINCT jo.job_id),
+                       SUM(1.0 / vlc.location_count)
+                FROM job_observations AS jo
+                JOIN china_city_links AS city
+                  ON city.job_version_id = jo.job_version_id
+                JOIN version_location_counts AS vlc
+                  ON vlc.job_version_id = jo.job_version_id
+                WHERE jo.crawl_run_id = :crawl_run_id
+                GROUP BY city.city_name
+                """
+            ),
+            {"snapshot_id": snapshot_id, "crawl_run_id": run.id},
+        )
 
     def due_source_keys(self) -> set[str]:
         """Return enabled sources missing at least one standard snapshot today."""

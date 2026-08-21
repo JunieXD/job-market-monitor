@@ -5,15 +5,18 @@ from sqlalchemy import case as sa_case
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
+from job_market.china_cities import china_city_name_sql, china_city_values_sql
 from job_market.models import (
     Company,
     CrawlRun,
     CrawlRunFieldStat,
     DailySnapshot,
+    DailySnapshotCityStat,
     Job,
     JobLifecycleEvent,
     JobLocation,
     JobObservation,
+    JobSearchDocument,
     JobVersion,
     JobVersionLocation,
     JobVersionLocationCity,
@@ -42,7 +45,11 @@ class DataQualityChecker:
                 "crawl_runs": self._count(session, CrawlRun),
                 "crawl_run_field_stats": self._count(session, CrawlRunFieldStat),
                 "daily_snapshots": self._count(session, DailySnapshot),
+                "daily_snapshot_city_stats": self._count(
+                    session, DailySnapshotCityStat
+                ),
                 "jobs": self._count(session, Job),
+                "job_search_documents": self._count(session, JobSearchDocument),
                 "job_versions": self._count(session, JobVersion),
                 "job_version_source_categories": self._count(
                     session,
@@ -64,6 +71,12 @@ class DataQualityChecker:
                 "invalid_daily_snapshot": self._invalid_daily_snapshot,
                 "daily_snapshot_rollup_mismatch": (
                     self._daily_snapshot_rollup_mismatch
+                ),
+                "daily_snapshot_city_stat_mismatch": (
+                    self._daily_snapshot_city_stat_mismatch
+                ),
+                "job_search_document_mismatch": (
+                    self._job_search_document_mismatch
                 ),
                 "successful_run_count_mismatch": self._successful_run_count_mismatch,
                 "invalid_baseline_snapshot": self._invalid_baseline_snapshot,
@@ -193,6 +206,102 @@ class DataQualityChecker:
             """
         )
         return int(session.execute(statement).scalar_one())
+
+    @staticmethod
+    def _daily_snapshot_city_stat_mismatch(session: Session) -> int:
+        standard_city_name = china_city_name_sql("cl.name")
+        statement = text(
+            f"""
+            WITH china_city_links AS (
+                SELECT DISTINCT jvlc.job_version_id,
+                       {standard_city_name} AS city_name
+                FROM job_version_location_cities AS jvlc
+                JOIN canonical_locations AS cl
+                  ON cl.id = jvlc.canonical_location_id
+                WHERE {standard_city_name} IN ({china_city_values_sql()})
+            ), version_location_counts AS (
+                SELECT job_version_id, COUNT(*) AS location_count
+                FROM china_city_links
+                GROUP BY job_version_id
+            ), expected AS (
+                SELECT ds.id AS daily_snapshot_id,
+                       city.city_name,
+                       COUNT(DISTINCT jo.job_id) AS posting_count,
+                       SUM(1.0 / vlc.location_count)
+                           AS fractional_posting_count
+                FROM daily_snapshots AS ds
+                JOIN job_observations AS jo
+                  ON jo.crawl_run_id = ds.crawl_run_id
+                JOIN china_city_links AS city
+                  ON city.job_version_id = jo.job_version_id
+                JOIN version_location_counts AS vlc
+                  ON vlc.job_version_id = jo.job_version_id
+                GROUP BY ds.id, city.city_name
+            ), mismatches AS (
+                SELECT expected.daily_snapshot_id, expected.city_name
+                FROM expected
+                LEFT JOIN daily_snapshot_city_stats AS actual
+                  ON actual.daily_snapshot_id = expected.daily_snapshot_id
+                 AND actual.city_name = expected.city_name
+                WHERE actual.daily_snapshot_id IS NULL
+                   OR actual.posting_count != expected.posting_count
+                   OR ABS(
+                       actual.fractional_posting_count
+                       - expected.fractional_posting_count
+                   ) > 0.000000000001
+                UNION ALL
+                SELECT actual.daily_snapshot_id, actual.city_name
+                FROM daily_snapshot_city_stats AS actual
+                LEFT JOIN expected
+                  ON expected.daily_snapshot_id = actual.daily_snapshot_id
+                 AND expected.city_name = actual.city_name
+                WHERE expected.daily_snapshot_id IS NULL
+            )
+            SELECT COUNT(*) FROM mismatches
+            """
+        )
+        return int(session.execute(statement).scalar_one())
+
+    @staticmethod
+    def _job_search_document_mismatch(session: Session) -> int:
+        rows = session.execute(
+            select(
+                Job.title,
+                Job.description,
+                Job.requirements,
+                JobSearchDocument.job_id,
+                JobSearchDocument.title_characters,
+                JobSearchDocument.description_characters,
+                JobSearchDocument.requirements_characters,
+            ).outerjoin(JobSearchDocument, JobSearchDocument.job_id == Job.id)
+        )
+        mismatches = 0
+        for row in rows:
+            if row.job_id is None:
+                mismatches += 1
+                continue
+            expected = (
+                DataQualityChecker._search_character_codes(row.title),
+                DataQualityChecker._search_character_codes(row.description),
+                DataQualityChecker._search_character_codes(row.requirements),
+            )
+            actual = (
+                row.title_characters,
+                row.description_characters,
+                row.requirements_characters,
+            )
+            mismatches += actual != expected
+        return mismatches
+
+    @staticmethod
+    def _search_character_codes(value: str | None) -> list[int]:
+        return sorted(
+            {
+                ord(character)
+                for character in (value or "").lower()
+                if not character.isspace() or character in "\u00a0\u202f"
+            }
+        )
 
     @staticmethod
     def _successful_run_count_mismatch(session: Session) -> int:

@@ -4,10 +4,6 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
-from job_market.china_cities import (
-    china_city_name_sql,
-    china_city_values_sql,
-)
 from job_market.normalization import canonical_city_key
 
 
@@ -360,8 +356,6 @@ class AnalyticsRepository:
             filters.append("ds.channel = :channel")
             params["channel"] = channel
         where = f"WHERE {' AND '.join(filters)}" if filters else ""
-        standard_city_name = china_city_name_sql("cl.name")
-        city_where = f"WHERE {standard_city_name} IN ({china_city_values_sql()})"
         company_columns = (
             ""
             if market
@@ -384,32 +378,18 @@ class AnalyticsRepository:
                 {company_joins}
                 {where}
                 GROUP BY ds.snapshot_date
-            ), china_city_links AS (
-                SELECT DISTINCT jvlc.job_version_id,
-                       {standard_city_name} AS city_name
-                FROM job_version_location_cities AS jvlc
-                JOIN canonical_locations AS cl
-                    ON cl.id = jvlc.canonical_location_id
-                {city_where}
-            ), version_location_counts AS (
-                SELECT job_version_id, COUNT(*) AS location_count
-                FROM china_city_links
-                GROUP BY job_version_id
             ), city_counts AS (
                 SELECT ds.snapshot_date, ds.channel{company_columns},
                        city.city_name,
-                       COUNT(DISTINCT jo.job_id) AS posting_count,
-                       SUM(1.0 / vlc.location_count) AS fractional_posting_count
+                       SUM(city.posting_count) AS posting_count,
+                       SUM(city.fractional_posting_count)
+                           AS fractional_posting_count
                        {covered_company}
                 FROM daily_snapshots AS ds
                 JOIN sources AS s ON s.id = ds.source_id
                 {company_joins}
-                JOIN job_observations AS jo
-                    ON jo.crawl_run_id = ds.crawl_run_id
-                JOIN china_city_links AS city
-                    ON city.job_version_id = jo.job_version_id
-                JOIN version_location_counts AS vlc
-                    ON vlc.job_version_id = jo.job_version_id
+                JOIN daily_snapshot_city_stats AS city
+                    ON city.daily_snapshot_id = ds.id
                 {where}
                 GROUP BY ds.snapshot_date, ds.channel{group_company},
                          city.city_name

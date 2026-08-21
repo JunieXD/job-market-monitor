@@ -52,7 +52,7 @@ def test_fresh_migrations_match_models_and_create_analysis_views() -> None:
             text("SELECT version_num FROM alembic_version")
         ).scalar_one()
         drift = compare_metadata(MigrationContext.configure(connection), Base.metadata)
-    assert revision == "0020"
+    assert revision == "0021"
     assert drift == []
     columns = {item["name"]: item for item in inspect(engine).get_columns("jobs")}
     run_columns = {
@@ -81,6 +81,8 @@ def test_fresh_migrations_match_models_and_create_analysis_views() -> None:
         "source_channels",
         "job_version_source_categories",
         "crawl_run_field_stats",
+        "daily_snapshot_city_stats",
+        "job_search_documents",
     }.issubset(inspect(engine).get_table_names())
     assert set(inspect(engine).get_view_names()) == {
         "daily_category_stats",
@@ -110,6 +112,19 @@ def test_read_query_migration_can_downgrade_and_restore_views() -> None:
             "daily_market_category_stats",
             "daily_market_city_stats",
         }
+        command.upgrade(migration_config(connection), "head")
+
+    assert check_schema(engine)["ok"] is True
+
+
+def test_city_and_search_read_models_can_downgrade_and_restore() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+
+    with engine.begin() as connection:
+        command.downgrade(migration_config(connection), "0020")
+        assert "daily_snapshot_city_stats" not in inspect(connection).get_table_names()
+        assert "job_search_documents" not in inspect(connection).get_table_names()
         command.upgrade(migration_config(connection), "head")
 
     assert check_schema(engine)["ok"] is True

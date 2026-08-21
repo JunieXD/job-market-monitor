@@ -369,6 +369,7 @@ def create_app(
             snapshot_filters.append(f"ds.channel IN ({placeholders})")
         selected_query_fields = query_fields
         has_query = query is not None and bool(query.strip())
+        search_join = ""
         if has_query:
             columns_by_field = {
                 "title": ["j.title"],
@@ -376,22 +377,41 @@ def create_app(
                 "requirements": ["j.requirements"],
                 "all": ["j.title", "j.description", "j.requirements"],
             }
+            signature_by_column = {
+                "j.title": "title",
+                "j.description": "description",
+                "j.requirements": "requirements",
+            }
             selected_query_fields = (
                 []
                 if query_fields_empty
                 else list(dict.fromkeys(query_fields or [query_field]))
             )
             search_columns = [
-                column
+                (signature_by_column[column], column)
                 for field in selected_query_fields
                 for column in columns_by_field[field]
             ]
             if search_columns:
+                use_candidate_index = request.app.state.engine.dialect.name == "postgresql"
+                if use_candidate_index:
+                    search_join = (
+                        "JOIN job_search_documents AS jsd ON jsd.job_id = j.id"
+                    )
+                    params["query_characters"] = _search_character_codes(query)
                 filters.append(
                     "("
                     + " OR ".join(
-                        f"LOWER(COALESCE({column}, '')) LIKE :query ESCAPE '\\'"
-                        for column in search_columns
+                        (
+                            f"(jsd.{field}_characters @> "
+                            "CAST(:query_characters AS INTEGER[]) AND "
+                            f"LOWER(COALESCE({column}, '')) "
+                            "LIKE :query ESCAPE '\\')"
+                            if use_candidate_index
+                            else f"LOWER(COALESCE({column}, '')) "
+                            "LIKE :query ESCAPE '\\'"
+                        )
+                        for field, column in search_columns
                     )
                     + ")"
                 )
@@ -411,6 +431,7 @@ def create_app(
             FROM daily_snapshots AS ds
             JOIN job_observations AS jo ON jo.crawl_run_id = ds.crawl_run_id
             JOIN jobs AS j ON j.id = jo.job_id
+            {search_join}
             JOIN sources AS s ON s.id = j.source_id
             JOIN companies AS c ON c.id = s.company_id
             WHERE {where}
@@ -439,6 +460,7 @@ def create_app(
                 FROM daily_snapshots AS ds
                 JOIN job_observations AS jo ON jo.crawl_run_id = ds.crawl_run_id
                 JOIN jobs AS j ON j.id = jo.job_id
+                {search_join}
                 JOIN sources AS s ON s.id = j.source_id
                 JOIN companies AS c ON c.id = s.company_id
                 WHERE {where}
@@ -778,6 +800,16 @@ def _fuzzy_like_pattern(query: str) -> str:
         for character in characters
     ]
     return "%" + "%".join(escaped) + "%"
+
+
+def _search_character_codes(query: str) -> list[int]:
+    return sorted(
+        {
+            ord(character)
+            for character in query.casefold()
+            if not character.isspace()
+        }
+    )
 
 
 def _error_summary(error: str | None) -> str | None:

@@ -89,6 +89,15 @@ def test_api_exposes_health_overview_and_read_only_job_queries() -> None:
         fuzzy_jobs = client.get("/api/v1/jobs", params={"query": "后实"})
         assert fuzzy_jobs.json()["meta"]["pagination"]["total"] == 1
 
+        spaced_fuzzy_jobs = client.get(
+            "/api/v1/jobs", params={"query": "后 实"}
+        )
+        assert spaced_fuzzy_jobs.json()["meta"]["pagination"]["total"] == 1
+
+        for literal in ("%", "_", "\\"):
+            escaped_jobs = client.get("/api/v1/jobs", params={"query": literal})
+            assert escaped_jobs.json()["meta"]["pagination"]["total"] == 0
+
         description_jobs = client.get(
             "/api/v1/jobs",
             params={"query": "服开", "query_field": "description"},
