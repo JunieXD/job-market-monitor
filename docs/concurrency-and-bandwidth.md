@@ -270,7 +270,7 @@ Dockerfile 中的 `playwright install --with-deps chromium` 只在镜像构建�
 
 ### 2026-08-21 新增来源离线镜像回归
 
-米哈游、莉莉丝和虎扑接入后，使用 Ubuntu 发布目录和离线构建镜像
+米哈游、莉莉丝和虎扑接入后，使用 Ubuntu `/opt/job-market-monitor` 目录和离线构建镜像
 `sha256:9d2e235ab188...` 做代表性完整 dry-run。三个轮次都使用 `--pull never`，不写 PostgreSQL 或
 原始岗位数据；构建路径以本地 `vm-base` 为基础并强制 `--network=none`，没有下载依赖或 Chromium。
 

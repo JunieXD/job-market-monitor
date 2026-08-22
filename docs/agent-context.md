@@ -30,10 +30,10 @@
 - 采集器在 Docker 内使用 headless Chromium，不依赖宿主机桌面、X11、VNC 或显示器
 - 宿主机共享目录通常挂载为 `/media/psf/job-market-monitor`，用于传递代码和构建上下文；它可能是只读或
   性能较差的 Parallels 共享文件系统，不应作为长期运行目录
-- 推荐在虚拟机可写目录中运行发布副本：`/opt/job-market-monitor` 或已配置的发布目录
+- 虚拟机唯一标准运行目录：`/opt/job-market-monitor`
 
-不要假设 systemd 当前使用哪个目录。虚拟机曾配置过发布目录 drop-in，实际路径可能是
-`/opt/job-market-monitor-release`。每次部署或排查前先执行：
+systemd、Compose 和日常排查都统一使用这个目录；不要再创建或使用带有 `-release` 后缀的平行副本。
+每次部署或排查前可执行：
 
 ```bash
 rtk proxy prlctl exec "Ubuntu 26.04" systemctl show job-market-crawl.service \
