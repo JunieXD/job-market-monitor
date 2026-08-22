@@ -30,3 +30,6 @@ frontend/tsconfig.tsbuildinfo
 *.sqlite3
 *.json.gz
 *.html.gz
+
+# CodeGraph local index.
+.codegraph/
