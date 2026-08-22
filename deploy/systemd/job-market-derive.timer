@@ -1,0 +1,12 @@
+[Unit]
+Description=Run Job Market Monitor LLM derivation every day
+
+[Timer]
+OnCalendar=*-*-* 06:00:00 Asia/Shanghai
+Persistent=true
+RandomizedDelaySec=300
+AccuracySec=1m
+Unit=job-market-derive.service
+
+[Install]
+WantedBy=timers.target

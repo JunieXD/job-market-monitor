@@ -602,12 +602,143 @@ class DerivationRun(Base):
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    derivation_profile_id: Mapped[str | None] = mapped_column(
+        ForeignKey("derivation_profiles.id")
+    )
     kind: Mapped[str] = mapped_column(String(30), nullable=False)
     extractor_name: Mapped[str] = mapped_column(String(200), nullable=False)
     extractor_version: Mapped[str] = mapped_column(String(100), nullable=False)
     status: Mapped[str] = mapped_column(String(30), nullable=False)
     is_current: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     config: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error: Mapped[str | None] = mapped_column(Text)
+
+
+class DerivationProfile(Base):
+    __tablename__ = "derivation_profiles"
+    __table_args__ = (
+        UniqueConstraint("name", "version", name="uq_derivation_profiles_version"),
+        Index(
+            "uq_derivation_profiles_one_current",
+            "name",
+            unique=True,
+            postgresql_where=text("is_current"),
+            sqlite_where=text("is_current = 1"),
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    version: Mapped[str] = mapped_column(String(100), nullable=False)
+    provider: Mapped[str] = mapped_column(String(100), nullable=False)
+    model: Mapped[str] = mapped_column(String(200), nullable=False)
+    endpoint: Mapped[str] = mapped_column(String(500), nullable=False)
+    reasoning_effort: Mapped[str] = mapped_column(String(30), nullable=False)
+    prompt_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    schema_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    taxonomy_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    config: Mapped[dict] = mapped_column(JSON, nullable=False)
+    is_current: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class LLMCallLog(Base):
+    """One immutable-attempt audit record for an external LLM request."""
+
+    __tablename__ = "llm_call_logs"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('running', 'succeeded', 'failed')",
+            name="ck_llm_call_logs_status",
+        ),
+        Index(
+            "ix_llm_call_logs_run_started",
+            "derivation_run_id",
+            "started_at",
+        ),
+        Index(
+            "ix_llm_call_logs_job_started",
+            "job_version_id",
+            "started_at",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    job_version_derivation_id: Mapped[int] = mapped_column(
+        ForeignKey("job_version_derivations.id"), nullable=False
+    )
+    job_version_id: Mapped[int] = mapped_column(
+        ForeignKey("job_versions.id"), nullable=False
+    )
+    derivation_profile_id: Mapped[str] = mapped_column(
+        ForeignKey("derivation_profiles.id"), nullable=False
+    )
+    derivation_run_id: Mapped[str] = mapped_column(
+        ForeignKey("derivation_runs.id"), nullable=False
+    )
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    provider: Mapped[str] = mapped_column(String(100), nullable=False)
+    model: Mapped[str] = mapped_column(String(200), nullable=False)
+    endpoint: Mapped[str] = mapped_column(String(500), nullable=False)
+    reasoning_effort: Mapped[str] = mapped_column(String(30), nullable=False)
+    input_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    message_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(30), nullable=False)
+    output: Mapped[dict | None] = mapped_column(JSON)
+    provider_request_id: Mapped[str | None] = mapped_column(String(300))
+    finish_reason: Mapped[str | None] = mapped_column(String(100))
+    prompt_tokens: Mapped[int | None] = mapped_column(Integer)
+    cached_prompt_tokens: Mapped[int | None] = mapped_column(Integer)
+    completion_tokens: Mapped[int | None] = mapped_column(Integer)
+    total_tokens: Mapped[int | None] = mapped_column(Integer)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error: Mapped[str | None] = mapped_column(Text)
+
+
+class JobVersionDerivation(Base):
+    __tablename__ = "job_version_derivations"
+    __table_args__ = (
+        UniqueConstraint(
+            "job_version_id",
+            "derivation_profile_id",
+            name="uq_job_version_derivations_profile",
+        ),
+        CheckConstraint(
+            "status IN ('running', 'succeeded', 'failed')",
+            name="ck_job_version_derivations_status",
+        ),
+        Index(
+            "ix_job_version_derivations_profile_status",
+            "derivation_profile_id",
+            "status",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    job_version_id: Mapped[int] = mapped_column(
+        ForeignKey("job_versions.id"), nullable=False
+    )
+    derivation_profile_id: Mapped[str] = mapped_column(
+        ForeignKey("derivation_profiles.id"), nullable=False
+    )
+    derivation_run_id: Mapped[str] = mapped_column(
+        ForeignKey("derivation_runs.id"), nullable=False
+    )
+    status: Mapped[str] = mapped_column(String(30), nullable=False)
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    input_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    output: Mapped[dict | None] = mapped_column(JSON)
+    provider_request_id: Mapped[str | None] = mapped_column(String(300))
+    finish_reason: Mapped[str | None] = mapped_column(String(100))
+    prompt_tokens: Mapped[int | None] = mapped_column(Integer)
+    cached_prompt_tokens: Mapped[int | None] = mapped_column(Integer)
+    completion_tokens: Mapped[int | None] = mapped_column(Integer)
+    total_tokens: Mapped[int | None] = mapped_column(Integer)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     error: Mapped[str | None] = mapped_column(Text)

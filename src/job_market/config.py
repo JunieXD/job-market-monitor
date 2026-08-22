@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -56,3 +56,13 @@ class Settings(BaseSettings):
     crawl_block_nonessential_resources: bool = True
     crawl_block_service_workers: bool = True
     headless: bool = True
+    llm_enabled: bool = False
+    stepfun_api_key: SecretStr | None = None
+    stepfun_base_url: str = "https://api.stepfun.com/step_plan/v1/chat/completions"
+    stepfun_model: str = "step-3.5-flash"
+    llm_reasoning_effort: str = Field(default="low", pattern="^(low|medium|high)$")
+    llm_concurrency: int = Field(default=5, ge=1, le=20)
+    llm_request_timeout_seconds: int = Field(default=120, ge=10, le=600)
+    llm_max_tokens: int = Field(default=32768, ge=256, le=32768)
+    llm_max_attempts: int = Field(default=3, ge=1, le=10)
+    llm_stale_after_minutes: int = Field(default=30, ge=5, le=1440)

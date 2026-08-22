@@ -166,16 +166,28 @@ API 同时保留 `source_name` 供追溯；历史快照的自动地点映射也�
 
 ## 派生层
 
-派生能力当前停用。项目没有正式主题词表、主题分类结果或 LLM 提取结果，采集命令、定时任务
-和默认分析都不会生成或读取这些数据。数据库只预留可审计的通用结构：
+LLM 岗位画像 V1 已提供影子提取能力，但默认关闭且尚未发布到分析/API。采集事务和权威快照不依赖
+LLM；只有显式配置并运行独立 `derive-jobs` 命令时才调用模型。数据库的可审计结构包括：
 
 - `derivation_runs` 记录规则、LLM 或人工批次的配置、版本、状态和发布时间。
+- `derivation_profiles` 保存不可变的模型、端点、推理档位、Prompt、JSON Schema、taxonomy 及其哈希；
+  API key 不进入数据库。
+- `job_version_derivations` 以 `job_version_id + derivation_profile_id` 唯一保存任务状态、结构化输出、
+  原文证据、供应商请求 ID 和 token 用量。
 - `job_topic_mentions` 保存主题、相关度、命中字段、证据和置信度。
 - `job_derived_attributes` 保存学历、经验、技能、专业、届次等结构化结果。
 
 任何派生结果都只能关联 `job_version_id`，不得写回或覆盖官网事实。曾用于验证数据链路的
 Agent 关键词批次和词表已经退役：历史记录仅用于审计，`is_current = false`，对应主题也不再
 处于启用状态，因此不会进入默认查询。
+
+V1 只扫描已经出现在 `daily_snapshots` 权威快照中的当前在招岗位版本。相同 profile 下，同一
+`job_version_id` 成功后不会再次调用；岗位内容变化产生新版本后自动成为候选，内容恢复到历史版本时
+复用历史结果。模型、Prompt、Schema、taxonomy 或运行参数变化会产生新的内容哈希 profile，不覆盖旧结果。
+模型接收完整 `job_version.payload`，不由程序预选语义字段，也不按标点或排版预先切段。模型可以返回来源字段
+和原文证据作为解释上下文；这些证据不再经过程序逐字匹配、字符位置还原或技能名校验，不会因为证据格式差异
+拒绝保存画像。程序只保留 JSON Schema 和受控 taxonomy key 的结构约束。
+V1 profile 保持 `is_current = false`，在代表样本离线评估和人工复核通过前不得接入默认查询。
 
 重新启用派生能力前必须先确定并版本化：
 

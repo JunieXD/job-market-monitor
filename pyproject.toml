@@ -36,7 +36,11 @@ job-market = "job_market.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-job_market = ["migrations/script.py.mako"]
+job_market = [
+  "migrations/script.py.mako",
+  "derivation_profiles/**/*.json",
+  "derivation_profiles/**/*.md",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

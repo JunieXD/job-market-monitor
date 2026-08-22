@@ -140,6 +140,10 @@ Chromium。
 - `daily_snapshots`：来源/渠道当天最后一次完整权威快照
 - `job_lifecycle_events`：首次出现、变更、缺失、关闭、恢复、重新开放
 - `raw_snapshots`、字段统计和采集运行表：原始证据、覆盖率、问题和进度
+- `derivation_profiles`、`job_version_derivations`、`llm_call_logs`：默认关闭的版本化 LLM profile、岗位版本
+  提取结果、每次调用尝试（包括重试）的模型/endpoint/时间/状态、结构化输出和 token 审计；影子结果不进入
+  默认分析。调用输入正文不在普通日志中复制，而是通过 `job_version_id` 和 `input_hash` 关联
+  `job_versions.payload`，固定 prompt、taxonomy 和 schema 由 profile 配置及 hash 还原。
 
 `daily_snapshots` 还包含由上述事实表计算、可完整重建的每日计数读模型；`daily_snapshot_city_stats` 保存
 每个权威快照的标准城市覆盖数和折算岗位数；`job_search_documents` 保存当前岗位三个正文搜索字段的字符

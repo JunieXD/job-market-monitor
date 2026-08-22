@@ -4,6 +4,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).parents[1]
 OFFLINE_BUILD = ROOT / "deploy" / "build-collector-offline.sh"
+DERIVATION_SCHEDULER = ROOT / "deploy" / "run-scheduled-derivations.sh"
 
 
 def _write_executable(path: Path, content: str) -> None:
@@ -21,6 +22,15 @@ def test_runtime_compose_is_image_only_for_collector() -> None:
         collector = _collector_block(compose)
         assert "image:" in collector
         assert "build:" not in collector
+
+
+def test_derivation_scheduler_never_builds_or_pulls_images() -> None:
+    text = DERIVATION_SCHEDULER.read_text(encoding="utf-8")
+    assert "deriver derive-jobs" in text
+    assert "--pull never" in text
+    assert "image inspect" in text
+    assert " compose build" not in text
+    assert "--build" not in text
 
 
 def test_offline_dockerfile_has_no_network_dependency_install() -> None:

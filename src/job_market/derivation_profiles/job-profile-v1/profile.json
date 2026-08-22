@@ -1,0 +1,8 @@
+{
+  "name": "job-profile",
+  "version": "v1",
+  "provider": "stepfun",
+  "prompt_file": "prompt.md",
+  "schema_file": "schema.json",
+  "taxonomy_file": "taxonomy.json"
+}

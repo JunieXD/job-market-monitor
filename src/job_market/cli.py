@@ -46,6 +46,11 @@ from job_market.connectors.xiaohongshu import XiaohongshuConnector
 from job_market.connectors.xiaomi import XiaomiConnector
 from job_market.db import check_schema, create_schema, make_engine
 from job_market.health import SourceHealthChecker
+from job_market.llm_derivations import (
+    JobDerivationRepository,
+    load_profile,
+    run_job_derivations,
+)
 from job_market.observability import log_event
 from job_market.quality import DataQualityChecker
 from job_market.raw_store import RawStore
@@ -668,6 +673,26 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         help="Maximum runtime for each source channel",
     )
+    derive = subparsers.add_parser(
+        "derive-jobs",
+        help="Extract evidence-backed attributes for new job content versions",
+    )
+    derive.add_argument(
+        "--limit",
+        type=int,
+        default=100,
+        help="Maximum job versions to inspect or process",
+    )
+    derive.add_argument("--source", choices=sorted(SOURCE_SPECS))
+    derive.add_argument(
+        "--channel",
+        choices=[channel.value for channel in Channel],
+    )
+    derive.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="List eligible job versions without calling the model",
+    )
     return parser
 
 
@@ -1037,6 +1062,34 @@ def main() -> None:
             raise SystemExit(asyncio.run(crawl(args, settings)))
         except ValueError as exc:
             parser.error(str(exc))
+
+    if args.command == "derive-jobs":
+        if args.limit < 1 or args.limit > 10000:
+            parser.error("--limit must be between 1 and 10000")
+        engine = make_engine(settings)
+        create_schema(engine)
+        profile = load_profile(settings)
+        source_key = (
+            SOURCE_SPECS[args.source]["key"] if args.source is not None else None
+        )
+        try:
+            summary = asyncio.run(
+                run_job_derivations(
+                    JobDerivationRepository(engine),
+                    profile,
+                    settings,
+                    limit=args.limit,
+                    source_key=source_key,
+                    channel=args.channel,
+                    dry_run=args.dry_run,
+                )
+            )
+        except ValueError as exc:
+            parser.error(str(exc))
+        print(json.dumps(summary, ensure_ascii=False, sort_keys=True))
+        if summary.get("failed"):
+            raise SystemExit(2)
+        return
 
     if args.command == "check-data":
         engine = make_engine(settings)

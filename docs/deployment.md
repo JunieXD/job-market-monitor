@@ -149,6 +149,10 @@ systemctl status job-market-crawl.service --no-pager
 前者通过 CDP URL 模式阻止图片、字体、音视频而保留 HTTP 缓存；后者阻止后台 Service Worker。
 遇到某个站点页面依赖被阻止资源时，应只对该来源做小范围对照测试后再决定是否关闭，不要全局关闭。
 
+LLM 岗位画像使用独立 `deriver` 服务和 timer，默认关闭，不参与采集事务。密钥配置、影子运行、增量语义、
+成本边界和 timer 安装见 [llm-derivations.md](llm-derivations.md)。在影子样本通过评估前不要安装或启用
+`job-market-derive.timer`。
+
 ## 运行前检查
 
 - 服务器可以访问招聘官网，且不需要图形界面或登录态。

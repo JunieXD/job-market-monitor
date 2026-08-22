@@ -57,6 +57,25 @@ services:
     networks:
       - database
 
+  deriver:
+    image: ${COLLECTOR_IMAGE:-job-market-monitor-collector:latest}
+    init: true
+    logging: *default-logging
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL to the existing PostgreSQL instance}
+      LLM_ENABLED: ${LLM_ENABLED:-false}
+      STEPFUN_API_KEY: ${STEPFUN_API_KEY:-}
+      STEPFUN_BASE_URL: ${STEPFUN_BASE_URL:-https://api.stepfun.com/step_plan/v1/chat/completions}
+      STEPFUN_MODEL: ${STEPFUN_MODEL:-step-3.5-flash}
+      LLM_REASONING_EFFORT: ${LLM_REASONING_EFFORT:-low}
+      LLM_CONCURRENCY: ${LLM_CONCURRENCY:-5}
+      LLM_REQUEST_TIMEOUT_SECONDS: ${LLM_REQUEST_TIMEOUT_SECONDS:-120}
+      LLM_MAX_TOKENS: ${LLM_MAX_TOKENS:-32768}
+      LLM_MAX_ATTEMPTS: ${LLM_MAX_ATTEMPTS:-3}
+      LLM_STALE_AFTER_MINUTES: ${LLM_STALE_AFTER_MINUTES:-30}
+    networks:
+      - database
+
   api:
     build:
       context: .

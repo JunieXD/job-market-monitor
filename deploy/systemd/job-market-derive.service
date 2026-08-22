@@ -1,0 +1,14 @@
+[Unit]
+Description=Job Market Monitor incremental LLM job derivation
+After=docker.service network-online.target job-market-crawl.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/job-market-monitor
+Environment=DERIVATION_BATCH_LIMIT=100
+Environment=DERIVATION_TIMEOUT_SECONDS=21600
+ExecStart=/opt/job-market-monitor/deploy/run-scheduled-derivations.sh
+TimeoutStartSec=7h
+TimeoutStopSec=2m
+KillMode=control-group

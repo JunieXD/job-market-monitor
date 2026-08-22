@@ -1,0 +1,338 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "job_family": {
+      "anyOf": [
+        {"$ref": "#/$defs/job_family"},
+        {"type": "null"}
+      ]
+    },
+    "specializations": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/specialization"},
+      "maxItems": 5
+    },
+    "domains": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/domain"},
+      "maxItems": 5
+    },
+    "seniority": {
+      "anyOf": [
+        {"$ref": "#/$defs/seniority"},
+        {"type": "null"}
+      ]
+    },
+    "recruitment_audience": {
+      "anyOf": [
+        {"$ref": "#/$defs/recruitment_audience"},
+        {"type": "null"}
+      ]
+    },
+    "experience": {
+      "anyOf": [
+        {"$ref": "#/$defs/experience"},
+        {"type": "null"}
+      ]
+    },
+    "education": {
+      "anyOf": [
+        {"$ref": "#/$defs/education"},
+        {"type": "null"}
+      ]
+    },
+    "skills": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/skill"},
+      "maxItems": 30
+    },
+    "languages": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/language"},
+      "maxItems": 10
+    },
+    "work_conditions": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/work_condition"},
+      "maxItems": 10
+    },
+    "responsibilities": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/summary_item"},
+      "maxItems": 3
+    },
+    "qualifications": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/summary_item"},
+      "maxItems": 3
+    }
+  },
+  "required": [
+    "job_family",
+    "specializations",
+    "domains",
+    "seniority",
+    "recruitment_audience",
+    "experience",
+    "education",
+    "skills",
+    "languages",
+    "work_conditions",
+    "responsibilities",
+    "qualifications"
+  ],
+  "$defs": {
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "field": {
+          "type": "string",
+          "enum": [
+            "source_key", "external_id", "external_code", "source_url",
+            "company_name", "channel", "employment_type_id",
+            "employment_type_name", "recruitment_project_id",
+            "recruitment_project_name", "title", "description", "requirements",
+            "published_at", "source_updated_at", "source_status",
+            "recruitment_count", "degree_code", "degree_name",
+            "experience_min_years", "experience_max_years",
+            "graduation_start_at", "graduation_end_at", "department_code",
+            "department_name", "interview_location_names", "is_hot",
+            "locations", "categories", "business_units"
+          ]
+        },
+        "quote": {"type": "string", "minLength": 1, "maxLength": 2000}
+      },
+      "required": ["field", "quote"]
+    },
+    "evidence_list": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/evidence"},
+      "minItems": 1,
+      "maxItems": 3
+    },
+    "job_family": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "key": {
+          "type": "string",
+          "enum": [
+            "software_engineering", "algorithms_ai", "data", "product",
+            "design", "operations", "sales_business", "marketing_pr",
+            "customer_service", "people_hr", "finance_audit",
+            "legal_compliance", "supply_chain_procurement",
+            "hardware_engineering", "manufacturing_quality", "research",
+            "creative_content", "strategy_investment", "risk_management",
+            "consulting_solutions", "education_training",
+            "project_management", "administration_support", "other"
+          ]
+        },
+        "other_name": {
+          "anyOf": [
+            {"type": "string", "minLength": 1, "maxLength": 100},
+            {"type": "null"}
+          ]
+        },
+        "evidence": {"$ref": "#/$defs/evidence_list"}
+      },
+      "required": ["key", "other_name", "evidence"]
+    },
+    "specialization": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "key": {
+          "type": "string",
+          "enum": [
+            "backend", "frontend", "mobile", "client", "qa_testing",
+            "devops_sre", "security", "embedded", "machine_learning",
+            "recommendation_search_ads", "nlp_llm", "computer_vision",
+            "speech_audio", "audio_video_codec", "compiler_inference_system", "robotics_autonomous", "data_engineering",
+            "data_science_analytics", "product_management",
+            "user_content_operations", "commercial_operations",
+            "visual_ux_design", "sales_bd", "marketing_brand",
+            "hr_recruiting", "finance_accounting", "legal_compliance",
+            "supply_chain_logistics", "chip_hardware",
+            "manufacturing_quality", "project_delivery",
+            "solution_architecture_consulting", "database_administration",
+            "game_design_planning", "game_art_animation",
+            "content_editorial_creation", "strategy_investment",
+            "risk_control_fraud", "content_moderation_trust_safety",
+            "customer_support_service_delivery", "user_research",
+            "retail_store_operations", "education_training",
+            "public_government_affairs", "electrical_electronics",
+            "mechanical_structural", "rf_communications", "optics_imaging",
+            "other"
+          ]
+        },
+        "other_name": {
+          "anyOf": [
+            {"type": "string", "minLength": 1, "maxLength": 100},
+            {"type": "null"}
+          ]
+        },
+        "evidence": {"$ref": "#/$defs/evidence_list"}
+      },
+      "required": ["key", "other_name", "evidence"]
+    },
+    "domain": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "key": {
+          "type": "string",
+          "enum": [
+            "cloud_infrastructure", "enterprise_software",
+            "ecommerce_retail", "local_services", "social_content",
+            "games_entertainment", "advertising_growth",
+            "fintech_payments", "mobility_automotive",
+            "consumer_hardware_iot", "semiconductor", "ai_platform",
+            "cybersecurity", "healthcare", "education",
+            "logistics_supply_chain", "travel_hospitality",
+            "internationalization", "real_estate_property",
+            "industrial_manufacturing", "energy_utilities",
+            "telecommunications", "professional_services",
+            "media_publishing", "food_beverage", "human_resources_services",
+            "other"
+          ]
+        },
+        "other_name": {
+          "anyOf": [
+            {"type": "string", "minLength": 1, "maxLength": 100},
+            {"type": "null"}
+          ]
+        },
+        "evidence": {"$ref": "#/$defs/evidence_list"}
+      },
+      "required": ["key", "other_name", "evidence"]
+    },
+    "seniority": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "level": {
+          "type": "string",
+          "enum": ["intern", "entry", "mid", "senior", "lead", "expert", "manager"]
+        },
+        "evidence": {"$ref": "#/$defs/evidence_list"}
+      },
+      "required": ["level", "evidence"]
+    },
+    "recruitment_audience": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "categories": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "new_graduate", "internship", "experienced", "trainee",
+              "talent_program", "flexible_employment", "general", "other"
+            ]
+          },
+          "maxItems": 3
+        },
+        "graduation_years": {
+          "type": "array",
+          "items": {"type": "integer", "minimum": 2000, "maximum": 2100},
+          "maxItems": 5
+        },
+        "description": {
+          "anyOf": [
+            {"type": "string", "minLength": 1, "maxLength": 160},
+            {"type": "null"}
+          ]
+        },
+        "evidence": {"$ref": "#/$defs/evidence_list"}
+      },
+      "required": ["categories", "graduation_years", "description", "evidence"]
+    },
+    "experience": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "minimum_years": {"anyOf": [{"type": "integer", "minimum": 0, "maximum": 50}, {"type": "null"}]},
+        "maximum_years": {"anyOf": [{"type": "integer", "minimum": 0, "maximum": 50}, {"type": "null"}]},
+        "requirement": {"type": "string", "enum": ["required", "preferred"]},
+        "evidence": {"$ref": "#/$defs/evidence_list"}
+      },
+      "required": ["minimum_years", "maximum_years", "requirement", "evidence"]
+    },
+    "education": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "minimum_degree": {
+          "type": "string",
+          "enum": ["high_school", "associate", "bachelor", "master", "doctorate", "other"]
+        },
+        "majors": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1, "maxLength": 100},
+          "maxItems": 10
+        },
+        "requirement": {"type": "string", "enum": ["required", "preferred"]},
+        "evidence": {"$ref": "#/$defs/evidence_list"}
+      },
+      "required": ["minimum_degree", "majors", "requirement", "evidence"]
+    },
+    "skill": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "source_name": {"type": "string", "minLength": 1, "maxLength": 100},
+        "canonical_name": {"type": "string", "minLength": 1, "maxLength": 100},
+        "category": {
+          "type": "string",
+          "enum": [
+            "programming_language", "framework_library", "database_storage",
+            "cloud_platform", "data_ai", "security_technology",
+            "hardware_electronics", "manufacturing_quality", "engineering_tool",
+            "design_tool", "business_tool", "methodology", "domain_knowledge", "other"
+          ]
+        },
+        "requirement": {"type": "string", "enum": ["required", "preferred", "mentioned"]},
+        "evidence": {"$ref": "#/$defs/evidence_list"}
+      },
+      "required": ["source_name", "canonical_name", "category", "requirement", "evidence"]
+    },
+    "language": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {"type": "string", "minLength": 1, "maxLength": 100},
+        "level": {"anyOf": [{"type": "string", "minLength": 1, "maxLength": 100}, {"type": "null"}]},
+        "requirement": {"type": "string", "enum": ["required", "preferred", "mentioned"]},
+        "evidence": {"$ref": "#/$defs/evidence_list"}
+      },
+      "required": ["name", "level", "requirement", "evidence"]
+    },
+    "work_condition": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["travel", "shift", "on_call", "relocation", "onsite", "certificate", "portfolio", "physical", "other"]
+        },
+        "description": {"type": "string", "minLength": 1, "maxLength": 200},
+        "requirement": {"type": "string", "enum": ["required", "preferred", "mentioned"]},
+        "evidence": {"$ref": "#/$defs/evidence_list"}
+      },
+      "required": ["kind", "description", "requirement", "evidence"]
+    },
+    "summary_item": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "summary": {"type": "string", "minLength": 1, "maxLength": 200},
+        "evidence": {"$ref": "#/$defs/evidence_list"}
+      },
+      "required": ["summary", "evidence"]
+    }
+  }
+}
