@@ -4,8 +4,6 @@ import asyncio
 import copy
 import hashlib
 import json
-import urllib.error
-import urllib.request
 import uuid
 from collections import Counter
 from collections.abc import Callable
@@ -20,6 +18,13 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from job_market.config import Settings
+from job_market.llm_client import (
+    ChatResult,
+    LLMAPIError,
+    OpenAICompatibleChatClient,
+    chat_completions_url,
+    thinking_params,
+)
 from job_market.models import (
     DailySnapshot,
     DerivationProfile,
@@ -317,7 +322,9 @@ class LoadedProfile:
     provider: str
     model: str
     endpoint: str
-    reasoning_effort: str
+    thinking_mode: str
+    thinking_params: dict[str, Any]
+    structured_output: str
     max_tokens: int
     prompt: str
     schema: dict[str, Any]
@@ -326,6 +333,7 @@ class LoadedProfile:
     schema_sha256: str
     taxonomy_sha256: str
     config: dict[str, Any]
+    output_model: type[BaseModel] = JobProfileOutput
 
     def messages(self, source_input: dict[str, Any]) -> list[dict[str, str]]:
         taxonomy = json.dumps(
@@ -365,13 +373,21 @@ def load_profile(
     prompt_hash = _text_hash(prompt)
     schema_hash = _json_hash(schema)
     taxonomy_hash = _json_hash(taxonomy)
+    endpoint = chat_completions_url(settings.llm_base_url)
+    resolved_thinking_params = thinking_params(
+        settings.llm_thinking_dialect,
+        settings.llm_thinking_mode,
+    )
     config = {
         "name": manifest["name"],
         "definition_version": manifest["version"],
-        "provider": manifest["provider"],
-        "model": settings.stepfun_model,
-        "endpoint": settings.stepfun_base_url,
-        "reasoning_effort": settings.llm_reasoning_effort,
+        "provider": settings.llm_provider,
+        "model": settings.llm_model,
+        "endpoint": endpoint,
+        "thinking_mode": settings.llm_thinking_mode,
+        "thinking_dialect": settings.llm_thinking_dialect,
+        "thinking_params": resolved_thinking_params,
+        "structured_output": settings.llm_structured_output,
         "temperature": 0,
         "max_tokens": settings.llm_max_tokens,
         "prompt": prompt,
@@ -386,10 +402,12 @@ def load_profile(
         id=profile_id,
         name=manifest["name"],
         version=f"{manifest['version']}+{profile_id[:12]}",
-        provider=manifest["provider"],
-        model=settings.stepfun_model,
-        endpoint=settings.stepfun_base_url,
-        reasoning_effort=settings.llm_reasoning_effort,
+        provider=settings.llm_provider,
+        model=settings.llm_model,
+        endpoint=endpoint,
+        thinking_mode=settings.llm_thinking_mode,
+        thinking_params=resolved_thinking_params,
+        structured_output=settings.llm_structured_output,
         max_tokens=settings.llm_max_tokens,
         prompt=prompt,
         schema=schema,
@@ -413,170 +431,6 @@ def _json_hash(value: Any) -> str:
         separators=(",", ":"),
     )
     return _text_hash(canonical)
-
-
-@dataclass(frozen=True)
-class StepFunResult:
-    request_id: str | None
-    finish_reason: str
-    output: JobProfileOutput
-    prompt_tokens: int | None
-    completion_tokens: int | None
-    total_tokens: int | None
-    cached_prompt_tokens: int | None = None
-
-
-class StepFunAPIError(RuntimeError):
-    def __init__(
-        self,
-        message: str,
-        *,
-        request_id: str | None = None,
-        finish_reason: str | None = None,
-        prompt_tokens: int | None = None,
-        completion_tokens: int | None = None,
-        total_tokens: int | None = None,
-        cached_prompt_tokens: int | None = None,
-    ):
-        super().__init__(message)
-        self.request_id = request_id
-        self.finish_reason = finish_reason
-        self.prompt_tokens = prompt_tokens
-        self.completion_tokens = completion_tokens
-        self.total_tokens = total_tokens
-        self.cached_prompt_tokens = cached_prompt_tokens
-
-
-class StepFunChatClient:
-    def __init__(self, settings: Settings):
-        if not settings.stepfun_api_key:
-            raise ValueError("STEPFUN_API_KEY is required when LLM extraction is enabled")
-        self.api_key = settings.stepfun_api_key.get_secret_value()
-        self.timeout_seconds = settings.llm_request_timeout_seconds
-
-    def extract(
-        self,
-        profile: LoadedProfile,
-        source_input: dict[str, Any],
-    ) -> StepFunResult:
-        request_body = {
-            "model": profile.model,
-            "messages": profile.messages(source_input),
-            "reasoning_effort": profile.reasoning_effort,
-            "temperature": 0,
-            "max_tokens": profile.max_tokens,
-            "stream": False,
-            "response_format": {
-                "type": "json_schema",
-                "json_schema": {
-                    "name": f"{profile.name}_{profile.version}".replace("-", "_").replace("+", "_"),
-                    "strict": True,
-                    "schema": profile.schema,
-                },
-            },
-        }
-        request = urllib.request.Request(
-            profile.endpoint,
-            data=json.dumps(request_body, ensure_ascii=False).encode("utf-8"),
-            headers={
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-                "User-Agent": "job-market-monitor/llm-derivation",
-            },
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
-                payload = json.loads(response.read().decode("utf-8"))
-        except urllib.error.HTTPError as exc:
-            body = exc.read().decode("utf-8", errors="replace")
-            raise StepFunAPIError(
-                f"StepFun returned HTTP {exc.code}: {_safe_api_error(body)}"
-            ) from exc
-        except urllib.error.URLError as exc:
-            raise StepFunAPIError(f"StepFun request failed: {exc.reason}") from exc
-        except (TimeoutError, json.JSONDecodeError) as exc:
-            raise StepFunAPIError(f"StepFun response failed validation: {exc}") from exc
-
-        try:
-            choice = payload["choices"][0]
-            finish_reason = str(choice["finish_reason"])
-            content = choice["message"]["content"]
-        except (KeyError, IndexError, TypeError) as exc:
-            raise StepFunAPIError("StepFun response did not contain a chat choice") from exc
-        usage = payload.get("usage") or {}
-        request_id = _optional_string(payload.get("id"))
-        prompt_tokens = _optional_int(usage.get("prompt_tokens"))
-        completion_tokens = _optional_int(usage.get("completion_tokens"))
-        total_tokens = _optional_int(usage.get("total_tokens"))
-        prompt_token_details = usage.get("prompt_tokens_details")
-        if not isinstance(prompt_token_details, dict):
-            prompt_token_details = {}
-        cached_prompt_tokens = _optional_int(prompt_token_details.get("cached_tokens"))
-        if cached_prompt_tokens is None:
-            cached_prompt_tokens = _optional_int(usage.get("cached_tokens"))
-        if cached_prompt_tokens is None:
-            cached_prompt_tokens = _optional_int(usage.get("prompt_cache_hit_tokens"))
-        if finish_reason != "stop":
-            raise StepFunAPIError(
-                f"StepFun generation ended with {finish_reason!r}",
-                request_id=request_id,
-                finish_reason=finish_reason,
-                prompt_tokens=prompt_tokens,
-                completion_tokens=completion_tokens,
-                total_tokens=total_tokens,
-                cached_prompt_tokens=cached_prompt_tokens,
-            )
-        if not isinstance(content, str) or not content.strip():
-            raise StepFunAPIError(
-                "StepFun response contained no structured content",
-                request_id=request_id,
-                finish_reason=finish_reason,
-                prompt_tokens=prompt_tokens,
-                completion_tokens=completion_tokens,
-                total_tokens=total_tokens,
-                cached_prompt_tokens=cached_prompt_tokens,
-            )
-        try:
-            output = JobProfileOutput.model_validate_json(content)
-        except (ValueError, json.JSONDecodeError) as exc:
-            raise StepFunAPIError(
-                f"StepFun structured output is invalid: {exc}",
-                request_id=request_id,
-                finish_reason=finish_reason,
-                prompt_tokens=prompt_tokens,
-                completion_tokens=completion_tokens,
-                total_tokens=total_tokens,
-                cached_prompt_tokens=cached_prompt_tokens,
-            ) from exc
-        return StepFunResult(
-            request_id=request_id,
-            finish_reason=finish_reason,
-            output=output,
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-            total_tokens=total_tokens,
-            cached_prompt_tokens=cached_prompt_tokens,
-        )
-
-
-def _safe_api_error(body: str) -> str:
-    try:
-        payload = json.loads(body)
-        message = payload.get("error", {}).get("message")
-        if isinstance(message, str) and message:
-            return message[:1000]
-    except json.JSONDecodeError:
-        pass
-    return body[:1000]
-
-
-def _optional_string(value: Any) -> str | None:
-    return value if isinstance(value, str) and value else None
-
-
-def _optional_int(value: Any) -> int | None:
-    return value if isinstance(value, int) and value >= 0 else None
 
 
 @dataclass(frozen=True)
@@ -629,7 +483,7 @@ class JobDerivationRepository:
                     provider=profile.provider,
                     model=profile.model,
                     endpoint=profile.endpoint,
-                    reasoning_effort=profile.reasoning_effort,
+                    reasoning_effort=profile.thinking_mode,
                     prompt_sha256=profile.prompt_sha256,
                     schema_sha256=profile.schema_sha256,
                     taxonomy_sha256=profile.taxonomy_sha256,
@@ -689,7 +543,7 @@ class JobDerivationRepository:
                         "provider": profile.provider,
                         "model": profile.model,
                         "endpoint": profile.endpoint,
-                        "reasoning_effort": profile.reasoning_effort,
+                        "thinking_mode": profile.thinking_mode,
                         "limit": limit,
                         "concurrency": concurrency,
                     },
@@ -862,7 +716,7 @@ class JobDerivationRepository:
                     provider=profile.provider,
                     model=profile.model,
                     endpoint=profile.endpoint,
-                    reasoning_effort=profile.reasoning_effort,
+                    reasoning_effort=profile.thinking_mode,
                     input_hash=candidate.input_hash,
                     request_hash=candidate.request_hash,
                     message_count=len(profile.messages(candidate.source_input)),
@@ -875,7 +729,7 @@ class JobDerivationRepository:
     def succeed(
         self,
         task_id: int,
-        result: StepFunResult,
+        result: ChatResult,
         output: dict[str, Any],
         *,
         call_id: str | None = None,
@@ -914,8 +768,8 @@ class JobDerivationRepository:
         task_id: int,
         error: str,
         *,
-        api_error: StepFunAPIError | None = None,
-        result: StepFunResult | None = None,
+        api_error: LLMAPIError | None = None,
+        result: ChatResult | None = None,
         call_id: str | None = None,
     ) -> None:
         with Session(self.engine) as session, session.begin():
@@ -1042,7 +896,7 @@ async def run_job_derivations(
     source_key: str | None = None,
     channel: str | None = None,
     dry_run: bool = False,
-    client_factory: Callable[[Settings], StepFunChatClient] = StepFunChatClient,
+    client_factory: Callable[[Settings], OpenAICompatibleChatClient] = OpenAICompatibleChatClient,
 ) -> dict[str, Any]:
     stale_after = timedelta(minutes=settings.llm_stale_after_minutes)
     if dry_run:
@@ -1086,11 +940,11 @@ async def run_job_derivations(
         channel=channel,
     )
     semaphore = asyncio.Semaphore(settings.llm_concurrency)
-    results: list[tuple[str, StepFunResult | None, str | None]] = []
+    results: list[tuple[str, ChatResult | None, str | None]] = []
 
     async def process(candidate: DerivationCandidate) -> None:
         async with semaphore:
-            result: StepFunResult | None = None
+            result: ChatResult | None = None
             call_id: str | None = None
             try:
                 call_id = await asyncio.to_thread(
@@ -1111,7 +965,7 @@ async def run_job_derivations(
                     provider=profile.provider,
                     model=profile.model,
                     base_url=profile.endpoint,
-                    reasoning_effort=profile.reasoning_effort,
+                    reasoning_effort=profile.thinking_mode,
                     attempt=candidate.attempt_count,
                     input_hash=candidate.input_hash,
                     request_hash=candidate.request_hash,
@@ -1164,7 +1018,7 @@ async def run_job_derivations(
                     repository.fail,
                     candidate.task_id,
                     error,
-                    api_error=exc if isinstance(exc, StepFunAPIError) else None,
+                    api_error=exc if isinstance(exc, LLMAPIError) else None,
                     result=result,
                     call_id=call_id,
                 )
@@ -1182,30 +1036,20 @@ async def run_job_derivations(
                     model=profile.model,
                     base_url=profile.endpoint,
                     status="failed",
-                    provider_request_id=(
-                        exc.request_id if isinstance(exc, StepFunAPIError) else None
-                    ),
-                    finish_reason=(
-                        exc.finish_reason if isinstance(exc, StepFunAPIError) else None
-                    ),
-                    prompt_tokens=(
-                        exc.prompt_tokens if isinstance(exc, StepFunAPIError) else None
-                    ),
+                    provider_request_id=(exc.request_id if isinstance(exc, LLMAPIError) else None),
+                    finish_reason=(exc.finish_reason if isinstance(exc, LLMAPIError) else None),
+                    prompt_tokens=(exc.prompt_tokens if isinstance(exc, LLMAPIError) else None),
                     cached_prompt_tokens=(
                         exc.cached_prompt_tokens
-                        if isinstance(exc, StepFunAPIError)
+                        if isinstance(exc, LLMAPIError)
                         else (result.cached_prompt_tokens if result is not None else None)
                     ),
                     completion_tokens=(
-                        exc.completion_tokens if isinstance(exc, StepFunAPIError) else None
+                        exc.completion_tokens if isinstance(exc, LLMAPIError) else None
                     ),
-                    total_tokens=(
-                        exc.total_tokens if isinstance(exc, StepFunAPIError) else None
-                    ),
+                    total_tokens=(exc.total_tokens if isinstance(exc, LLMAPIError) else None),
                     error=error,
-                    output_content_ref=(
-                        "llm_call_logs.output" if result is not None else None
-                    ),
+                    output_content_ref=("llm_call_logs.output" if result is not None else None),
                 )
                 results.append(("failed", None, error))
 

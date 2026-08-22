@@ -83,10 +83,13 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://job_market:change-me-before-deploying@postgres:5432/job_market}
       LLM_ENABLED: ${LLM_ENABLED:-false}
-      STEPFUN_API_KEY: ${STEPFUN_API_KEY:-}
-      STEPFUN_BASE_URL: ${STEPFUN_BASE_URL:-https://api.stepfun.com/step_plan/v1/chat/completions}
-      STEPFUN_MODEL: ${STEPFUN_MODEL:-step-3.5-flash}
-      LLM_REASONING_EFFORT: ${LLM_REASONING_EFFORT:-low}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_BASE_URL: ${LLM_BASE_URL:-https://llm-pgvogg2xvi2bdy4d.cn-beijing.maas.aliyuncs.com/compatible-mode/v1}
+      LLM_MODEL: ${LLM_MODEL:-qwen3.7-flash}
+      LLM_PROVIDER: ${LLM_PROVIDER:-aliyun}
+      LLM_THINKING_MODE: ${LLM_THINKING_MODE:-off}
+      LLM_THINKING_DIALECT: ${LLM_THINKING_DIALECT:-enable_thinking}
+      LLM_STRUCTURED_OUTPUT: ${LLM_STRUCTURED_OUTPUT:-json_schema}
       LLM_CONCURRENCY: ${LLM_CONCURRENCY:-5}
       LLM_REQUEST_TIMEOUT_SECONDS: ${LLM_REQUEST_TIMEOUT_SECONDS:-120}
       LLM_MAX_TOKENS: ${LLM_MAX_TOKENS:-32768}

@@ -57,10 +57,21 @@ class Settings(BaseSettings):
     crawl_block_service_workers: bool = True
     headless: bool = True
     llm_enabled: bool = False
-    stepfun_api_key: SecretStr | None = None
-    stepfun_base_url: str = "https://api.stepfun.com/step_plan/v1/chat/completions"
-    stepfun_model: str = "step-3.5-flash"
-    llm_reasoning_effort: str = Field(default="low", pattern="^(low|medium|high)$")
+    llm_api_key: SecretStr | None = None
+    llm_base_url: str = (
+        "https://llm-pgvogg2xvi2bdy4d.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
+    )
+    llm_model: str = "qwen3.7-flash"
+    llm_provider: str = "aliyun"
+    llm_thinking_mode: str = Field(default="off", pattern="^(off|low|medium|high)$")
+    llm_thinking_dialect: str = Field(
+        default="enable_thinking",
+        pattern="^(enable_thinking|reasoning_effort|thinking_type|none)$",
+    )
+    llm_structured_output: str = Field(
+        default="json_schema",
+        pattern="^(json_schema|json_object|none)$",
+    )
     llm_concurrency: int = Field(default=5, ge=1, le=20)
     llm_request_timeout_seconds: int = Field(default=120, ge=10, le=600)
     llm_max_tokens: int = Field(default=32768, ge=256, le=32768)

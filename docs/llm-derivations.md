@@ -27,7 +27,7 @@ Prompt、严格 JSON Schema 和 taxonomy 位于：
 src/job_market/derivation_profiles/job-profile-v1/
 ```
 
-任一文件、模型、端点、推理档位或输出上限变化都会改变 `derivation_profile_id`。数据库保存完整配置及
+任一文件、模型、端点、思考配置或输出上限变化都会改变 `derivation_profile_id`。数据库保存完整配置及
 Prompt、Schema、taxonomy 的 SHA-256，但不会保存 API key。
 
 ### 缓存友好的请求结构
@@ -36,7 +36,7 @@ Prompt、Schema、taxonomy 的 SHA-256，但不会保存 API key。
 版本固定的完整中文 taxonomy，最后一条 `user` 才是完整且唯一变化的 `source_job`。岗位 payload 使用稳定的
 UTF-8 JSON 序列化和排序后的 key；不会把岗位标题、岗位 ID、时间戳或随机 request ID 插入固定前缀。这样在
 同一个 profile 连续调用时，服务商若支持自动 prompt-prefix caching，可以复用尽可能长的前缀；切换 prompt、
-Schema、taxonomy、模型或端点会自然产生新的 profile 前缀。StepFun 是否实际计费缓存命中由接口返回的 usage
+Schema、taxonomy、模型或端点会自然产生新的 profile 前缀。服务商是否实际计费缓存命中由接口返回的 usage
 字段决定，客户端兼容读取 `prompt_tokens_details.cached_tokens`、`cached_tokens` 和
 `prompt_cache_hit_tokens`，没有字段时不假设命中。
 
@@ -63,18 +63,22 @@ ORDER BY c.started_at, c.id;
 
 `job_version_derivations` 保留该岗位版本最后一次尝试的汇总状态，`llm_call_logs` 才是逐调用（含失败和重试）
 的审计明细。`derive-jobs` 的 `call_count`、失败调用数和 token 汇总也从这张表计算，因此重试不会被任务行
-覆盖。缓存字段来自 StepFun usage；接口未返回缓存字段时保持 `NULL`，不把未知当作未命中。
+覆盖。缓存字段来自服务商 usage；接口未返回缓存字段时保持 `NULL`，不把未知当作未命中。
 
-## StepFun 配置
+## LLM 接入配置（通用客户端）
 
-在部署机未跟踪的 `.env` 中配置：
+抽取客户端位于 `src/job_market/llm_client.py`，面向任何 OpenAI Chat Completions 兼容协议，切换厂商
+只改 `.env`，不改代码。在部署机未跟踪的 `.env` 中配置：
 
 ```dotenv
 LLM_ENABLED=true
-STEPFUN_API_KEY=<本地密钥>
-STEPFUN_BASE_URL=https://api.stepfun.com/step_plan/v1/chat/completions
-STEPFUN_MODEL=step-3.5-flash
-LLM_REASONING_EFFORT=low
+LLM_API_KEY=<本地密钥>
+LLM_BASE_URL=https://llm-pgvogg2xvi2bdy4d.cn-beijing.maas.aliyuncs.com/compatible-mode/v1
+LLM_MODEL=qwen3.7-flash
+LLM_PROVIDER=aliyun
+LLM_THINKING_MODE=off
+LLM_THINKING_DIALECT=enable_thinking
+LLM_STRUCTURED_OUTPUT=json_schema
 LLM_CONCURRENCY=5
 LLM_REQUEST_TIMEOUT_SECONDS=120
 LLM_MAX_TOKENS=32768
@@ -82,15 +86,52 @@ LLM_MAX_ATTEMPTS=3
 LLM_STALE_AFTER_MINUTES=30
 ```
 
+`LLM_BASE_URL` 写 OpenAI 风格的 base（如 `.../compatible-mode/v1`）或完整 `.../chat/completions`
+地址都可以，客户端会统一解析。`LLM_PROVIDER` 只是审计标签。
+
 `.env` 权限应为 `600`，不得提交 Git。密钥只传入 Compose 的 `deriver` 服务，不传给 API、Web 或日常
 采集容器。
 
-这里必须使用 Step Plan 专用端点，不能替换成普通余额端点 `https://api.stepfun.com/v1/chat/completions`。
-StepFun 当前文档把 `step-3.5-flash` 列为 Step Plan 支持模型；2026-08-21 已用上述专用端点完成最小请求和
-项目严格 JSON Schema 请求验证。V1 使用 `reasoning_effort=low`。真实官网岗位对照中，4096 和 8192
-上限均出现 `finish_reason=length`；此前的严格结构化测试中，同一数仓岗位在 16384 上限下已经使用 10228
-completion tokens。现在将上限提高到模型接口允许的 32768，避免复杂岗位因输出上限导致失败。上限不是预扣用量，
-仍按实际生成量计费；只有接口返回非完整响应或 JSON 无法解析时才算失败。
+### 思考模式控制
+
+画像抽取是纯结构化提取任务，不需要长思考；思考档位与厂商表达方式拆成两个配置：
+
+- `LLM_THINKING_MODE`：语义意图，`off` / `low` / `medium` / `high`，与厂商无关；
+- `LLM_THINKING_DIALECT`：翻译成请求体字段的方式（OpenAI SDK 中 `extra_body` 的字段等价于直接
+  合并进请求体顶层）：
+
+| 方言 | 厂商示例 | off 时请求体 | low/medium/high 时请求体 |
+| --- | --- | --- | --- |
+| `enable_thinking` | 阿里云百炼/DashScope qwen 系列 | `{"enable_thinking": false}` | `{"enable_thinking": true}`（协议无档位） |
+| `reasoning_effort` | OpenAI o 系列、StepFun step 系列 | `{"reasoning_effort": "low"}`（无法完全关闭，退化最低档） | `{"reasoning_effort": "<档位>"}` |
+| `thinking_type` | 智谱 GLM、Anthropic 风格 | `{"thinking": {"type": "disabled"}}` | `{"thinking": {"type": "enabled"}}` |
+| `none` | 无思考模型或拒绝未知字段的厂商 | 不发送 | 不发送 |
+
+有些模型没办法关闭思考，只能降低思考程度；`reasoning_effort` 方言就是这种情况，`off` 会自动退化为
+最低档，实际发送的参数记录在 profile config 与调用审计里。
+
+`LLM_STRUCTURED_OUTPUT` 控制结构化输出风格：`json_schema`（默认，请求体带严格 JSON Schema）、
+`json_object`（只声明 JSON 输出，结构靠 system prompt 与本地 Pydantic 校验兜底）、`none`
+（不带 response_format）。厂商不支持严格 Schema 时先降级到 `json_object` 再观察校验失败率。
+
+审计表列名沿用历史的 `reasoning_effort`，存储语义档位字符串（如 `off`）；完整思考参数在 config JSON 中。
+
+### 当前模型：阿里云 qwen3.7-flash（2026-08-22）
+
+2026-08-22 从 StepFun `step-3.5-flash` 切换到阿里云专属 MaaS 端点的 `qwen3.7-flash`，思考模式
+`enable_thinking=false` 完全关闭，结构化输出仍用严格 `json_schema`。切换当天用项目客户端的真实请求体
+完成最小验证：响应无 `reasoning_content`（思考确实关闭）、`finish_reason=stop`、输出通过
+`JobProfileOutput` 校验，单次耗时约 8 秒，usage 的缓存命中位于
+`prompt_tokens_details.cached_tokens`。模型/端点/思考配置变化会生成新的 `derivation_profile_id`，
+旧 StepFun 画像保留在库中可对照。
+
+### StepFun 历史记录（2026-08-21 ~ 08-22）
+
+此前使用 Step Plan 专用端点（不能替换成普通余额端点 `https://api.stepfun.com/v1/chat/completions`）、
+`step-3.5-flash`、`reasoning_effort=low`。真实官网岗位对照中，4096 和 8192 上限均出现
+`finish_reason=length`；严格结构化测试中，同一数仓岗位在 16384 上限下已经使用 10228 completion
+tokens，因此将上限提高到模型接口允许的 32768。上限不是预扣用量，仍按实际生成量计费；只有接口返回
+非完整响应或 JSON 无法解析时才算失败。
 
 `prompt.md` 只定义通用提取协议：完整理解来源、只根据官网内容提取、按核心职责分类、只提取硬技能、
 归一化要求强度、返回解释上下文和严格遵守 Schema。具体字段规则、中文分类定义、正反例与易混淆边界

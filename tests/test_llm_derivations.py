@@ -9,9 +9,9 @@ from sqlalchemy.pool import StaticPool
 
 from job_market.config import Settings
 from job_market.llm_derivations import (
+    ChatResult,
     JobDerivationRepository,
     JobProfileOutput,
-    StepFunResult,
     build_source_input,
     load_profile,
     run_job_derivations,
@@ -49,11 +49,11 @@ def collection(job: JobRecord) -> CollectionResult:
     )
 
 
-class FakeStepFunClient:
+class FakeChatClient:
     def __init__(self) -> None:
         self.calls: list[str] = []
 
-    def extract(self, profile, source_input) -> StepFunResult:
+    def extract(self, profile, source_input) -> ChatResult:
         del profile
         title = source_input["source_job"]["title"]
         self.calls.append(title)
@@ -118,7 +118,7 @@ class FakeStepFunClient:
                 "qualifications": [],
             }
         )
-        return StepFunResult(
+        return ChatResult(
             request_id=f"request-{len(self.calls)}",
             finish_reason="stop",
             output=output,
@@ -129,8 +129,8 @@ class FakeStepFunClient:
         )
 
 
-class InvalidEvidenceClient(FakeStepFunClient):
-    def extract(self, profile, source_input) -> StepFunResult:
+class InvalidEvidenceClient(FakeChatClient):
+    def extract(self, profile, source_input) -> ChatResult:
         result = super().extract(profile, source_input)
         family = result.output.job_family
         assert family is not None
@@ -145,7 +145,7 @@ class InvalidEvidenceClient(FakeStepFunClient):
                 )
             }
         )
-        return StepFunResult(
+        return ChatResult(
             request_id=result.request_id,
             finish_reason=result.finish_reason,
             output=output,
@@ -156,17 +156,24 @@ class InvalidEvidenceClient(FakeStepFunClient):
         )
 
 
-def test_profile_uses_requested_stepfun_defaults() -> None:
-    settings = Settings(stepfun_api_key="not-a-real-secret")
+def test_profile_uses_requested_provider_defaults() -> None:
+    settings = Settings(llm_api_key="not-a-real-secret")
     profile = load_profile(settings)
 
-    assert profile.model == "step-3.5-flash"
-    assert profile.endpoint == "https://api.stepfun.com/step_plan/v1/chat/completions"
-    assert profile.reasoning_effort == "low"
+    assert profile.provider == "aliyun"
+    assert profile.model == "qwen3.7-flash"
+    assert profile.endpoint == (
+        "https://llm-pgvogg2xvi2bdy4d.cn-beijing.maas.aliyuncs.com"
+        "/compatible-mode/v1/chat/completions"
+    )
+    assert profile.thinking_mode == "off"
+    assert profile.thinking_params == {"enable_thinking": False}
+    assert profile.structured_output == "json_schema"
     assert profile.max_tokens == 32768
     assert profile.version.startswith("v1+")
     assert profile.config["temperature"] == 0
     assert profile.config["prompt_sha256"] == profile.prompt_sha256
+    assert profile.config["thinking_params"] == {"enable_thinking": False}
     assert len(profile.id) == 64
     assert "not-a-real-secret" not in repr(settings)
 
@@ -657,12 +664,12 @@ async def test_unchanged_and_restored_versions_are_not_called_twice() -> None:
     source_id = crawl_repository.ensure_source()
     settings = Settings(
         llm_enabled=True,
-        stepfun_api_key="test-key",
+        llm_api_key="test-key",
         llm_concurrency=2,
     )
     profile = load_profile(settings)
     derivations = JobDerivationRepository(engine)
-    client = FakeStepFunClient()
+    client = FakeChatClient()
 
     def ingest(title: str) -> None:
         run_id = crawl_repository.start_run(source_id, Channel.EXPERIENCED.value)
@@ -723,12 +730,12 @@ async def test_partial_only_version_is_not_sent_until_authoritative() -> None:
     source_id = crawl_repository.ensure_source()
     settings = Settings(
         llm_enabled=True,
-        stepfun_api_key="test-key",
+        llm_api_key="test-key",
         llm_concurrency=2,
     )
     profile = load_profile(settings)
     derivations = JobDerivationRepository(engine)
-    client = FakeStepFunClient()
+    client = FakeChatClient()
 
     partial = collection(make_job("Java 后端工程师")).model_copy(
         update={"complete": False, "absence_authoritative": False}
@@ -781,7 +788,7 @@ async def test_model_output_is_stored_without_evidence_validation_failure() -> N
     crawl_repository.ingest(run_id, collection(make_job("Java 后端工程师")))
     settings = Settings(
         llm_enabled=True,
-        stepfun_api_key="test-key",
+        llm_api_key="test-key",
         llm_concurrency=2,
     )
 
@@ -814,9 +821,9 @@ async def test_model_output_is_stored_without_evidence_validation_failure() -> N
         assert call.status == "succeeded"
         assert call.derivation_run_id == summary["run_id"]
         assert call.derivation_profile_id == summary["profile_id"]
-        assert call.provider == "stepfun"
-        assert call.model == "step-3.5-flash"
-        assert call.endpoint.endswith("/step_plan/v1/chat/completions")
+        assert call.provider == "aliyun"
+        assert call.model == "qwen3.7-flash"
+        assert call.endpoint.endswith("/compatible-mode/v1/chat/completions")
         assert call.message_count == 3
         assert call.prompt_tokens == 100
         assert call.cached_prompt_tokens == 25
