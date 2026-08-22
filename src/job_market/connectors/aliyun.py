@@ -49,6 +49,7 @@ class AliyunConnector(CainiaoConnector):
         self._active_location_name: str | None = None
         self._observed_category_filters: dict[str, tuple[str, str]] = {}
         self._observed_location_filters: dict[str, str] = {}
+        self._root_record_ids: set[str] = set()
 
     async def collect(
         self,
@@ -59,67 +60,33 @@ class AliyunConnector(CainiaoConnector):
         if channel is not Channel.EXPERIENCED:
             raise ValueError("Alibaba Cloud connector supports only experienced jobs")
 
-        initial_payload = await self._open_root()
-        first = self._position_page(initial_payload, expected_page=1)
-        root_total = first["total"]
-        root_sample = {
-            record.external_id: record
-            for record in (self.parse_job(raw) for raw in first["rows"])
-        }
-        self.pages_fetched += 1
-        self._save_payload(channel, "root-sample", 0, initial_payload)
+        (
+            jobs_by_id,
+            root_total,
+            root_initial_total,
+            root_pass_count,
+            root_complete,
+        ) = await self._collect_root_records(channel, max_pages)
         partition_counts = {
             "all": root_total,
-            "root-initial": root_total,
-            "root-sample": len(root_sample),
+            "source-declared-total": root_total,
+            "root-initial": root_initial_total,
+            "root-pass-count": root_pass_count,
+            "root-pages": min(ceil(root_total / UI_PAGE_SIZE), 50)
+            if root_total
+            else 0,
+            "root-unique": len(jobs_by_id),
+            "root-declared-mismatch": int(len(jobs_by_id) != root_total),
         }
-        if max_pages is not None and self.pages_fetched >= max_pages:
+        if not root_complete:
             return CollectionResult(
                 channel=channel,
-                jobs=list(root_sample.values()),
+                jobs=list(jobs_by_id.values()),
                 snapshots=self.snapshots,
                 partition_counts=partition_counts,
                 pages_fetched=self.pages_fetched,
                 complete=False,
             )
-
-        jobs_by_id: dict[str, JobRecord] = dict(root_sample)
-        root_window_pages = min(ceil(root_total / UI_PAGE_SIZE), 50)
-        payload = initial_payload
-        for page_number in range(2, root_window_pages + 1):
-            if max_pages is not None and self.pages_fetched >= max_pages:
-                partition_counts["root-window"] = len(jobs_by_id)
-                return CollectionResult(
-                    channel=channel,
-                    jobs=list(jobs_by_id.values()),
-                    snapshots=self.snapshots,
-                    partition_counts=partition_counts,
-                    pages_fetched=self.pages_fetched,
-                    complete=False,
-                )
-            payload = await self._next_page(page_number)
-            current = self._position_page(payload, expected_page=page_number)
-            if current["total"] != root_total:
-                raise RuntimeError(
-                    "Alibaba Cloud root total changed while collecting its "
-                    f"safe 500-row window: {root_total} -> {current['total']}"
-                )
-            self.pages_fetched += 1
-            self._save_payload(
-                channel,
-                "root-window",
-                page_number - 1,
-                payload,
-            )
-            self._merge_records(
-                jobs_by_id,
-                {
-                    record.external_id: record
-                    for record in (self.parse_job(raw) for raw in current["rows"])
-                },
-                context="root window",
-            )
-        partition_counts["root-window"] = len(jobs_by_id)
 
         category_catalog = await self._category_catalog()
         location_catalog = await self._location_catalog()
@@ -136,6 +103,10 @@ class AliyunConnector(CainiaoConnector):
                     f"Alibaba Cloud location {location_name!r} exposed no request identity"
                 )
             partition_counts[f"location:{location_code}"] = total
+            partition_counts[f"location:{location_code}-unique"] = len(records)
+            partition_counts[f"location:{location_code}-declared-mismatch"] = int(
+                len(records) != total
+            )
             self._merge_records(
                 jobs_by_id,
                 records,
@@ -171,6 +142,10 @@ class AliyunConnector(CainiaoConnector):
                 )
             category_id, _subcategory_ids = filter_values
             partition_counts[f"category:{category_id}"] = total
+            partition_counts[f"category:{category_id}-unique"] = len(records)
+            partition_counts[f"category:{category_id}-declared-mismatch"] = int(
+                len(records) != total
+            )
             category = SourceCategoryRecord(
                 external_id=f"top:{category_id}",
                 name=category_name,
@@ -199,12 +174,6 @@ class AliyunConnector(CainiaoConnector):
                     pages_fetched=self.pages_fetched,
                     complete=False,
                 )
-
-        if len(jobs_by_id) != root_total:
-            raise RuntimeError(
-                "Alibaba Cloud safe partition union does not cover the root total: "
-                f"root={root_total}, partition-union={len(jobs_by_id)}"
-            )
 
         self._save_payload(
             channel,
@@ -241,6 +210,15 @@ class AliyunConnector(CainiaoConnector):
             bool(categories) for categories in assignments.values()
         )
         partition_counts["collected-unique"] = len(jobs_by_id)
+        partition_counts["all"] = len(jobs_by_id)
+        partition_counts["declared-total-mismatch"] = int(
+            len(jobs_by_id) != root_total
+        )
+        partition_counts["filter-extra-unique"] = len(
+            set(jobs_by_id) - set(
+                self._root_record_ids
+            )
+        )
         return CollectionResult(
             channel=channel,
             jobs=self._with_categories(jobs_by_id, assignments),
@@ -248,6 +226,126 @@ class AliyunConnector(CainiaoConnector):
             partition_counts=partition_counts,
             pages_fetched=self.pages_fetched,
             complete=True,
+        )
+
+    async def _collect_root_records(
+        self,
+        channel: Channel,
+        max_pages: int | None,
+    ) -> tuple[dict[str, JobRecord], int, int, int, bool]:
+        """Collect every root page and tolerate a stable stale total.
+
+        The portal's filter tree does not enumerate every city/category present
+        in the root list, and the UI/API exposes only a 500-row root window.
+        We therefore traverse that window twice when its declared total is
+        larger, then use every complete official filter partition to extend
+        the observed set.  A repeated root-window ID is accepted only when the
+        capped observation is stable.
+        """
+        stable_records: dict[str, JobRecord] = {}
+        target_total: int | None = None
+        initial_total: int | None = None
+
+        for attempt in range(1, MAX_COLLECTION_ATTEMPTS + 1):
+            payload = await self._open_root()
+            first = self._position_page(payload, expected_page=1)
+            current_total = first["total"]
+            if initial_total is None:
+                initial_total = current_total
+            if target_total != current_total:
+                target_total = current_total
+                stable_records = {}
+
+            total_pages = (
+                min(ceil(target_total / UI_PAGE_SIZE), 50)
+                if target_total
+                else 0
+            )
+            current_records: dict[str, JobRecord] = {}
+            partition = "root" if attempt == 1 else f"root-retry-{attempt}"
+            for page_number in range(1, total_pages + 1):
+                if max_pages is not None and self.pages_fetched >= max_pages:
+                    self._root_record_ids = set(current_records)
+                    return (
+                        current_records or stable_records,
+                        target_total,
+                        initial_total,
+                        attempt,
+                        False,
+                    )
+                page_payload = (
+                    payload
+                    if page_number == 1
+                    else await self._next_page(page_number)
+                )
+                current = self._position_page(
+                    page_payload,
+                    expected_page=page_number,
+                )
+                if current["total"] != target_total:
+                    raise RuntimeError(
+                        "Alibaba Cloud root total changed while collecting full "
+                        f"pagination: {target_total} -> {current['total']}"
+                    )
+                self.pages_fetched += 1
+                self._save_payload(
+                    channel,
+                    partition,
+                    page_number - 1,
+                    page_payload,
+                )
+                self._merge_records(
+                    current_records,
+                    {
+                        record.external_id: record
+                        for record in (
+                            self.parse_job(raw) for raw in current["rows"]
+                        )
+                    },
+                    context=f"root pass {attempt}",
+                )
+
+            if len(current_records) > target_total:
+                raise RuntimeError(
+                    "Alibaba Cloud root pagination exceeded its declared total: "
+                    f"declared={target_total}, unique={len(current_records)}"
+                )
+            if len(current_records) == target_total:
+                self._root_record_ids = set(current_records)
+                return (
+                    current_records,
+                    target_total,
+                    initial_total,
+                    attempt,
+                    True,
+                )
+            if stable_records and self._same_records(stable_records, current_records):
+                self._root_record_ids = set(current_records)
+                return (
+                    current_records,
+                    target_total,
+                    initial_total,
+                    attempt,
+                    True,
+                )
+            stable_records = current_records
+
+        raise RuntimeError(
+            "Alibaba Cloud root list did not stabilize after "
+            f"{MAX_COLLECTION_ATTEMPTS} full passes: declared={target_total}, "
+            f"unique={len(stable_records)}"
+        )
+
+    @staticmethod
+    def _same_records(
+        left: dict[str, JobRecord],
+        right: dict[str, JobRecord],
+    ) -> bool:
+        if set(left) != set(right):
+            return False
+        return all(
+            left[external_id].content_hash() == right[external_id].content_hash()
+            for external_id in left
         )
 
     async def _category_catalog(self) -> list[str]:
@@ -284,6 +382,7 @@ class AliyunConnector(CainiaoConnector):
         max_pages: int | None,
     ) -> tuple[dict[str, JobRecord], int, bool]:
         union: dict[str, JobRecord] = {}
+        stable_union: dict[str, JobRecord] = {}
         target_total: int | None = None
 
         for attempt in range(1, MAX_COLLECTION_ATTEMPTS + 1):
@@ -292,6 +391,7 @@ class AliyunConnector(CainiaoConnector):
             if target_total != first["total"]:
                 target_total = first["total"]
                 union = {}
+                stable_union = {}
             if target_total > 500:
                 raise RuntimeError(
                     f"Alibaba Cloud {filter_kind} {filter_name!r} exceeds the "
@@ -345,6 +445,9 @@ class AliyunConnector(CainiaoConnector):
                         f"Alibaba Cloud {filter_kind} {filter_name!r} exceeded its "
                         f"declared total: {len(union)} > {target_total}"
                     )
+                if stable_union and self._same_records(stable_union, union):
+                    return union, target_total, True
+                stable_union = dict(union)
 
         raise RuntimeError(
             f"Alibaba Cloud {filter_kind} {filter_name!r} did not converge: "
@@ -401,7 +504,9 @@ class AliyunConnector(CainiaoConnector):
             )
         await next_button.evaluate("element => element.click()")
         payload = await self._next_payload(f"positions:{page_number}")
-        await self._assert_active_page(page_number)
+        # The portal only renders a sliding window of pagination buttons.  For
+        # pages beyond that window, the response's currentPage metadata is the
+        # authoritative page check performed by _position_page.
         return payload
 
     async def _assert_active_page(self, expected_page: int) -> None:

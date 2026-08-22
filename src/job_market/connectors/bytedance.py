@@ -94,13 +94,15 @@ class ByteDanceConnector:
         root = Partition(label="all")
         filters, _ = await self._open_partition(portal, root)
         partitions = await self._build_partitions(portal, filters)
+        root_count = self._partition_counts[root]
         jobs_by_id: dict[str, JobRecord] = {}
-        partition_counts: dict[str, int] = {}
+        partition_counts: dict[str, int] = {"all": root_count}
         complete = True
 
         for partition in partitions:
             count = await self._count_partition(portal, partition)
             partition_counts[partition.label] = count
+            partition_ids: set[str] = set()
             if self._current_partition == partition and self._current_payload is not None:
                 payload = self._current_payload
             else:
@@ -130,6 +132,7 @@ class ByteDanceConnector:
                     )
                 for row in rows:
                     record = self.parse_job(row, channel)
+                    partition_ids.add(record.external_id)
                     jobs_by_id[record.external_id] = record
 
                 offset += len(rows)
@@ -137,6 +140,37 @@ class ByteDanceConnector:
                     payload = await self._next_page(partition)
             if not complete:
                 break
+            partition_counts[f"{partition.label}-unique"] = len(partition_ids)
+            if len(partition_ids) != count:
+                partition_counts[f"{partition.label}-coverage-missing"] = max(
+                    count - len(partition_ids),
+                    0,
+                )
+                partition_counts[f"{partition.label}-coverage-extra"] = max(
+                    len(partition_ids) - count,
+                    0,
+                )
+                complete = False
+                break
+
+        if complete and root_count >= API_CAP:
+            partition_sum = sum(
+                partition_counts[partition.label]
+                for partition in partitions
+            )
+            partition_union = len(jobs_by_id)
+            partition_counts["partition-sum"] = partition_sum
+            partition_counts["partition-union"] = partition_union
+            if partition_union < root_count or partition_union != partition_sum:
+                partition_counts["partition-coverage-missing"] = max(
+                    root_count - partition_union,
+                    0,
+                )
+                partition_counts["partition-overlap"] = max(
+                    partition_sum - partition_union,
+                    0,
+                )
+                complete = False
 
         return CollectionResult(
             channel=channel,

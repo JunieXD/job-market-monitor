@@ -1,6 +1,9 @@
 import json
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
+
+import pytest
 
 from job_market.connectors.aliyun import AliyunConnector
 from job_market.schemas import CategoryAssignmentMethod, Channel
@@ -57,3 +60,57 @@ def test_aliyun_accepts_known_broken_pagination_metadata() -> None:
 
     assert page["total"] == 668
     assert len(page["rows"]) == 8
+
+
+class _RootPassConnector(AliyunConnector):
+    def __init__(self, pages: list[dict[str, Any]]) -> None:
+        self.pages = pages
+        self.pages_fetched = 0
+        self.snapshots = []
+
+    async def _open_root(self) -> dict[str, Any]:
+        return self.pages[0]
+
+    async def _next_page(self, page_number: int) -> dict[str, Any]:
+        return self.pages[page_number - 1]
+
+    def _save_payload(self, *args: Any, **kwargs: Any) -> None:
+        return None
+
+
+@pytest.mark.asyncio
+async def test_aliyun_accepts_stable_unique_count_when_declared_total_is_stale() -> None:
+    raw = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    rows = []
+    for index in range(500):
+        row = dict(raw)
+        row["id"] = f"synthetic-{index:03d}"
+        row["code"] = f"CODE-{index:03d}"
+        row["name"] = f"Synthetic role {index}"
+        rows.append(row)
+
+    pages = []
+    for offset in range(0, len(rows), 10):
+        page_rows = rows[offset : offset + 10]
+        pages.append(
+            {
+                "success": True,
+                "content": {
+                    "currentPage": len(pages) + 1,
+                    "pageSize": 10,
+                    "totalCount": 691,
+                    "datas": page_rows,
+                },
+            }
+        )
+
+    connector = _RootPassConnector(pages)
+    records, declared, initial, passes, complete = await connector._collect_root_records(
+        Channel.EXPERIENCED,
+        None,
+    )
+
+    assert complete is True
+    assert declared == initial == 691
+    assert len(records) == 500
+    assert passes == 2

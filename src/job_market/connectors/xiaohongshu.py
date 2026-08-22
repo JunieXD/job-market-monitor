@@ -123,10 +123,25 @@ class XiaohongshuConnector:
                 if label.startswith("category-")
             )
             if len(jobs_by_id) != category_sum:
-                raise RuntimeError(
-                    "Xiaohongshu category coverage mismatch: "
-                    f"categories={category_sum}, unique={len(jobs_by_id)}"
+                partition_counts["category-coverage-missing"] = max(
+                    category_sum - len(jobs_by_id),
+                    0,
                 )
+                partition_counts["category-coverage-overlap"] = max(
+                    len(jobs_by_id) - category_sum,
+                    0,
+                )
+                complete = False
+            if len(jobs_by_id) != root_total:
+                partition_counts["root-coverage-missing"] = max(
+                    root_total - len(jobs_by_id),
+                    0,
+                )
+                partition_counts["root-coverage-extra"] = max(
+                    len(jobs_by_id) - root_total,
+                    0,
+                )
+                complete = False
 
         partition_counts["collected-unique"] = len(jobs_by_id)
         partition_counts.update(

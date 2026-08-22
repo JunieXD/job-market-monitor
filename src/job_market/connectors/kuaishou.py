@@ -210,11 +210,14 @@ class KuaishouConnector:
                         if not child_complete:
                             complete = False
                             break
-                    if complete and len(category_jobs) != first["total"]:
-                        raise RuntimeError(
-                            f"Kuaishou {category_partition} location coverage mismatch: "
-                            f"declared={first['total']}, union={len(category_jobs)}"
-                        )
+                if complete and len(category_jobs) != first["total"]:
+                    partition_counts[
+                        f"{category_partition}-location-coverage-missing"
+                    ] = max(first["total"] - len(category_jobs), 0)
+                    partition_counts[
+                        f"{category_partition}-location-coverage-extra"
+                    ] = max(len(category_jobs) - first["total"], 0)
+                    complete = False
 
                 overlap_count += self._merge_records(
                     jobs_by_id,
@@ -227,10 +230,15 @@ class KuaishouConnector:
             if not complete:
                 break
             if category_total != root["total"]:
-                raise RuntimeError(
-                    f"Kuaishou {partition} category coverage mismatch: "
-                    f"root={root['total']}, category_sum={category_total}"
+                partition_counts[f"{partition}-category-coverage-missing"] = max(
+                    root["total"] - category_total,
+                    0,
                 )
+                partition_counts[f"{partition}-category-coverage-extra"] = max(
+                    category_total - root["total"],
+                    0,
+                )
+                complete = False
 
         if overlap_count:
             partition_counts["cross-partition-overlap"] = overlap_count
@@ -311,11 +319,7 @@ class KuaishouConnector:
             if len(union_by_id) > target_total:
                 union_by_id = pass_by_id
 
-        raise RuntimeError(
-            f"Kuaishou {partition} did not converge after "
-            f"{MAX_PARTITION_ATTEMPTS} attempts: "
-            f"declared={target_total}, union={len(union_by_id)}"
-        )
+        return union_by_id, False
 
     async def _open_partition_with_retry(
         self,
